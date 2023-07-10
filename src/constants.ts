@@ -1,5 +1,6 @@
 export const NUM_ROWS = 8;
 export const NUM_COLUMNS = 8;
+export const NUM_SQUARES = NUM_ROWS * NUM_COLUMNS;
 export const NUM_STARTING_PIECES = 7;
 export const ABILITY_SKIP = -1;
 export const MOVE_SKIP = -1;
