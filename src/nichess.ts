@@ -1,5 +1,10 @@
 import * as constants from './constants'
-import { pieceTypeToString } from './util'
+import { 
+  pieceTypeToString, 
+  generateLegalMovesOnAnEmptyBoard,
+  generateLegalAbilitiesOnAnEmptyBoard,
+  generateSquareToNeighboringSquares
+  } from './util'
 
 export enum Player {
   PLAYER_1 = 0,
@@ -71,7 +76,9 @@ export class GameCache {
   public pieceTypeToSquareIndexToLegalAbilities: Array<Array<Array<PlayerAbility>>>
   public squareToNeighboringSquares: Array<Array<number>>
   constructor() {
-    // TODO
+    this.pieceTypeToSquareIndexToLegalMoves = generateLegalMovesOnAnEmptyBoard()
+    this.pieceTypeToSquareIndexToLegalAbilities = generateLegalAbilitiesOnAnEmptyBoard()
+    this.squareToNeighboringSquares = generateSquareToNeighboringSquares()
   }
 }
 
@@ -202,6 +209,665 @@ export class Game {
     this.playerToPieces.push(p2Pieces);
   }
 
+  usefulLegalActions(): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>()
+    // If King is dead, game is over and there are no legal actions
+    if(this.playerToPieces[this.currentPlayer][constants.KING_PIECE_INDEX].healthPoints <= 0) {
+      return retval;
+    }
+    for(let i = 0; i < constants.NUM_STARTING_PIECES; i++) {
+      let currentPiece: Piece = this.playerToPieces[this.currentPlayer][i];
+      if(currentPiece.healthPoints <= 0) continue; // dead pieces don't move
+
+      let legalMoves: Array<PlayerMove> = this.gameCache.pieceTypeToSquareIndexToLegalMoves[currentPiece.type][currentPiece.squareIndex];
+      for(let j = 0; j < legalMoves.length; j++) {
+        let currentMove: PlayerMove = legalMoves[j];
+        // Is p1 pawn trying to jump over another piece?
+        if(currentPiece.type == PieceType.P1_PAWN &&
+            currentPiece.squareIndex - currentMove.moveDstIdx == -2 * constants.NUM_COLUMNS 
+            ) {
+          // checks whether square in front of the p1 pawn is empty
+          if(this.board[currentPiece.squareIndex + constants.NUM_COLUMNS].type != PieceType.NO_PIECE) continue;
+        }
+        // Is p2 pawn trying to jump over another piece?
+        if(currentPiece.type == PieceType.P2_PAWN &&
+            currentPiece.squareIndex - currentMove.moveDstIdx == 2 * constants.NUM_COLUMNS 
+            ) {
+          // checks whether square in front of the p2 pawn is empty
+          if(this.board[currentPiece.squareIndex - constants.NUM_COLUMNS].type != PieceType.NO_PIECE) continue;
+        }
+
+        if(this.board[currentMove.moveDstIdx].type != PieceType.NO_PIECE) continue;
+        this.makeMove(currentMove.moveSrcIdx, currentMove.moveDstIdx);
+        for(let k = 0; k < constants.NUM_STARTING_PIECES; k++) {
+          let cp2: Piece = this.playerToPieces[this.currentPlayer][k];
+          if(cp2.healthPoints <= 0) continue; // no abilities for dead pieces
+          let legalAbilities: Array<PlayerAbility> = this.gameCache.pieceTypeToSquareIndexToLegalAbilities[cp2.type][cp2.squareIndex];
+          for(let l = 0; l < legalAbilities.length; l++) {
+            let currentAbility: PlayerAbility = legalAbilities[l];
+            let destinationSquarePiece: Piece = this.board[currentAbility.abilityDstIdx];
+            // exclude useless abilities, e.g. warrior attacking empty square
+            switch(cp2.type) {
+              // king can only use abilities on enemy pieces
+              case PieceType.P1_KING:
+                switch(destinationSquarePiece.type) {
+                  case PieceType.P1_KING:
+                    continue;
+                  case PieceType.P1_MAGE:
+                    continue;
+                  case PieceType.P1_PAWN:
+                    continue;
+                  case PieceType.P1_WARRIOR:
+                    continue;
+                  case PieceType.P1_ASSASSIN:
+                    continue;
+                  case PieceType.P2_KING:
+                    break;
+                  case PieceType.P2_MAGE:
+                    break;
+                  case PieceType.P2_PAWN:
+                    break;
+                  case PieceType.P2_WARRIOR:
+                    break;
+                  case PieceType.P2_ASSASSIN:
+                    break;
+                  case PieceType.NO_PIECE:
+                    continue;
+                  default:
+                    break;
+                }
+              // mage can only use abilities on enemy pieces
+              case PieceType.P1_MAGE:
+                switch(destinationSquarePiece.type) {
+                  case PieceType.P1_KING:
+                    continue;
+                  case PieceType.P1_MAGE:
+                    continue;
+                  case PieceType.P1_PAWN:
+                    continue;
+                  case PieceType.P1_WARRIOR:
+                    continue;
+                  case PieceType.P1_ASSASSIN:
+                    continue;
+                  case PieceType.P2_KING:
+                    break;
+                  case PieceType.P2_MAGE:
+                    break;
+                  case PieceType.P2_PAWN:
+                    break;
+                  case PieceType.P2_WARRIOR:
+                    break;
+                  case PieceType.P2_ASSASSIN:
+                    break;
+                  case PieceType.NO_PIECE:
+                    continue;
+                  default:
+                    break;
+                }
+                break;
+              // pawn can only use abilities on enemy pieces
+              case PieceType.P1_PAWN:
+                switch(destinationSquarePiece.type) {
+                  case PieceType.P1_KING:
+                    continue;
+                  case PieceType.P1_MAGE:
+                    continue;
+                  case PieceType.P1_PAWN:
+                    continue;
+                  case PieceType.P1_WARRIOR:
+                    continue;
+                  case PieceType.P1_ASSASSIN:
+                    continue;
+                  case PieceType.P2_KING:
+                    break;
+                  case PieceType.P2_MAGE:
+                    break;
+                  case PieceType.P2_PAWN:
+                    break;
+                  case PieceType.P2_WARRIOR:
+                    break;
+                  case PieceType.P2_ASSASSIN:
+                    break;
+                  case PieceType.NO_PIECE:
+                    continue;
+                  default:
+                    break;
+                }
+                break;
+              // warrior can only use abilities on enemy pieces
+              case PieceType.P1_WARRIOR:
+                switch(destinationSquarePiece.type) {
+                  case PieceType.P1_KING:
+                    continue;
+                  case PieceType.P1_MAGE:
+                    continue;
+                  case PieceType.P1_PAWN:
+                    continue;
+                  case PieceType.P1_WARRIOR:
+                    continue;
+                  case PieceType.P1_ASSASSIN:
+                    continue;
+                  case PieceType.P2_KING:
+                    break;
+                  case PieceType.P2_MAGE:
+                    break;
+                  case PieceType.P2_PAWN:
+                    break;
+                  case PieceType.P2_WARRIOR:
+                    break;
+                  case PieceType.P2_ASSASSIN:
+                    break;
+                  case PieceType.NO_PIECE:
+                    continue;
+                  default:
+                    break;
+                }
+                break;
+              // assassin can only use abilities on enemy pieces
+              case PieceType.P1_ASSASSIN:
+                switch(destinationSquarePiece.type) {
+                  case PieceType.P1_KING:
+                    continue;
+                  case PieceType.P1_MAGE:
+                    continue;
+                  case PieceType.P1_PAWN:
+                    continue;
+                  case PieceType.P1_WARRIOR:
+                    continue;
+                  case PieceType.P1_ASSASSIN:
+                    continue;
+                  case PieceType.P2_KING:
+                    break;
+                  case PieceType.P2_MAGE:
+                    break;
+                  case PieceType.P2_PAWN:
+                    break;
+                  case PieceType.P2_WARRIOR:
+                    break;
+                  case PieceType.P2_ASSASSIN:
+                    break;
+                  case PieceType.NO_PIECE:
+                    continue;
+                  default:
+                    break;
+                }
+                break;
+
+              // king can only use abilities on enemy pieces
+              case PieceType.P2_KING:
+                switch(destinationSquarePiece.type) {
+                  case PieceType.P1_KING:
+                    break;
+                  case PieceType.P1_MAGE:
+                    break;
+                  case PieceType.P1_PAWN:
+                    break;
+                  case PieceType.P1_WARRIOR:
+                    break;
+                  case PieceType.P1_ASSASSIN:
+                    break;
+                  case PieceType.P2_KING:
+                    continue;
+                  case PieceType.P2_MAGE:
+                    continue;
+                  case PieceType.P2_PAWN:
+                    continue;
+                  case PieceType.P2_WARRIOR:
+                    continue;
+                  case PieceType.P2_ASSASSIN:
+                    continue;
+                  case PieceType.NO_PIECE:
+                    continue;
+                  default:
+                    break;
+                }
+              // mage can only use abilities on enemy pieces
+              case PieceType.P2_MAGE:
+                switch(destinationSquarePiece.type) {
+                  case PieceType.P1_KING:
+                    break;
+                  case PieceType.P1_MAGE:
+                    break;
+                  case PieceType.P1_PAWN:
+                    break;
+                  case PieceType.P1_WARRIOR:
+                    break;
+                  case PieceType.P1_ASSASSIN:
+                    break;
+                  case PieceType.P2_KING:
+                    continue;
+                  case PieceType.P2_MAGE:
+                    continue;
+                  case PieceType.P2_PAWN:
+                    continue;
+                  case PieceType.P2_WARRIOR:
+                    continue;
+                  case PieceType.P2_ASSASSIN:
+                    continue;
+                  case PieceType.NO_PIECE:
+                    continue;
+                  default:
+                    break;
+                }
+                break;
+              // pawn can only use abilities on enemy pieces
+              case PieceType.P2_PAWN:
+                switch(destinationSquarePiece.type) {
+                  case PieceType.P1_KING:
+                    break;
+                  case PieceType.P1_MAGE:
+                    break;
+                  case PieceType.P1_PAWN:
+                    break;
+                  case PieceType.P1_WARRIOR:
+                    break;
+                  case PieceType.P1_ASSASSIN:
+                    break;
+                  case PieceType.P2_KING:
+                    continue;
+                  case PieceType.P2_MAGE:
+                    continue;
+                  case PieceType.P2_PAWN:
+                    continue;
+                  case PieceType.P2_WARRIOR:
+                    continue;
+                  case PieceType.P2_ASSASSIN:
+                    continue;
+                  case PieceType.NO_PIECE:
+                    continue;
+                  default:
+                    break;
+                }
+                break;
+              // warrior can only use abilities on enemy pieces
+              case PieceType.P2_WARRIOR:
+                switch(destinationSquarePiece.type) {
+                  case PieceType.P1_KING:
+                    break;
+                  case PieceType.P1_MAGE:
+                    break;
+                  case PieceType.P1_PAWN:
+                    break;
+                  case PieceType.P1_WARRIOR:
+                    break;
+                  case PieceType.P1_ASSASSIN:
+                    break;
+                  case PieceType.P2_KING:
+                    continue;
+                  case PieceType.P2_MAGE:
+                    continue;
+                  case PieceType.P2_PAWN:
+                    continue;
+                  case PieceType.P2_WARRIOR:
+                    continue;
+                  case PieceType.P2_ASSASSIN:
+                    continue;
+                  case PieceType.NO_PIECE:
+                    continue;
+                  default:
+                    break;
+                }
+                break;
+              // assassin can only use abilities on enemy pieces
+              case PieceType.P2_ASSASSIN:
+                switch(destinationSquarePiece.type) {
+                  case PieceType.P1_KING:
+                    break;
+                  case PieceType.P1_MAGE:
+                    break;
+                  case PieceType.P1_PAWN:
+                    break;
+                  case PieceType.P1_WARRIOR:
+                    break;
+                  case PieceType.P1_ASSASSIN:
+                    break;
+                  case PieceType.P2_KING:
+                    continue;
+                  case PieceType.P2_MAGE:
+                    continue;
+                  case PieceType.P2_PAWN:
+                    continue;
+                  case PieceType.P2_WARRIOR:
+                    continue;
+                  case PieceType.P2_ASSASSIN:
+                    continue;
+                  case PieceType.NO_PIECE:
+                    continue;
+                  default:
+                    break;
+                }
+                break;
+              case PieceType.NO_PIECE:
+                break;
+              default:
+                break;
+            }
+            let p = new PlayerAction(currentMove.moveSrcIdx, currentMove.moveDstIdx, currentAbility.abilitySrcIdx, currentAbility.abilityDstIdx);
+            retval.push(p);
+          }
+        }
+        // player can skip the ability
+        let p = new PlayerAction(currentMove.moveSrcIdx, currentMove.moveDstIdx, constants.ABILITY_SKIP, constants.ABILITY_SKIP);
+        retval.push(p);
+
+        this.undoMove(currentMove.moveSrcIdx, currentMove.moveDstIdx);
+      }
+    }
+    // player can skip the move
+    for(let k = 0; k < constants.NUM_STARTING_PIECES; k++) {
+      let cp2: Piece = this.playerToPieces[this.currentPlayer][k];
+      if(cp2.healthPoints <= 0) continue; // no abilities for dead pieces
+      let legalAbilities: Array<PlayerAbility> = this.gameCache.pieceTypeToSquareIndexToLegalAbilities[cp2.type][cp2.squareIndex];
+      for(let l = 0; l < legalAbilities.length; l++) {
+        let currentAbility: PlayerAbility = legalAbilities[l];
+        let destinationSquarePiece: Piece = this.board[currentAbility.abilityDstIdx];
+        // exclude useless abilities
+        switch(cp2.type) {
+          // king can only use abilities on enemy pieces
+          case PieceType.P1_KING:
+            switch(destinationSquarePiece.type) {
+              case PieceType.P1_KING:
+                continue;
+              case PieceType.P1_MAGE:
+                continue;
+              case PieceType.P1_PAWN:
+                continue;
+              case PieceType.P1_WARRIOR:
+                continue;
+              case PieceType.P1_ASSASSIN:
+                continue;
+              case PieceType.P2_KING:
+                break;
+              case PieceType.P2_MAGE:
+                break;
+              case PieceType.P2_PAWN:
+                break;
+              case PieceType.P2_WARRIOR:
+                break;
+              case PieceType.P2_ASSASSIN:
+                break;
+              case PieceType.NO_PIECE:
+                continue;
+              default:
+                break;
+            }
+          // mage can only use abilities on enemy pieces
+          case PieceType.P1_MAGE:
+            switch(destinationSquarePiece.type) {
+              case PieceType.P1_KING:
+                continue;
+              case PieceType.P1_MAGE:
+                continue;
+              case PieceType.P1_PAWN:
+                continue;
+              case PieceType.P1_WARRIOR:
+                continue;
+              case PieceType.P1_ASSASSIN:
+                continue;
+              case PieceType.P2_KING:
+                break;
+              case PieceType.P2_MAGE:
+                break;
+              case PieceType.P2_PAWN:
+                break;
+              case PieceType.P2_WARRIOR:
+                break;
+              case PieceType.P2_ASSASSIN:
+                break;
+              case PieceType.NO_PIECE:
+                continue;
+              default:
+                break;
+            }
+            break;
+          // pawn can only use abilities on enemy pieces
+          case PieceType.P1_PAWN:
+            switch(destinationSquarePiece.type) {
+              case PieceType.P1_KING:
+                continue;
+              case PieceType.P1_MAGE:
+                continue;
+              case PieceType.P1_PAWN:
+                continue;
+              case PieceType.P1_WARRIOR:
+                continue;
+              case PieceType.P1_ASSASSIN:
+                continue;
+              case PieceType.P2_KING:
+                break;
+              case PieceType.P2_MAGE:
+                break;
+              case PieceType.P2_PAWN:
+                break;
+              case PieceType.P2_WARRIOR:
+                break;
+              case PieceType.P2_ASSASSIN:
+                break;
+              case PieceType.NO_PIECE:
+                continue;
+              default:
+                break;
+            }
+            break;
+          // warrior can only use abilities on enemy pieces
+          case PieceType.P1_WARRIOR:
+            switch(destinationSquarePiece.type) {
+              case PieceType.P1_KING:
+                continue;
+              case PieceType.P1_MAGE:
+                continue;
+              case PieceType.P1_PAWN:
+                continue;
+              case PieceType.P1_WARRIOR:
+                continue;
+              case PieceType.P1_ASSASSIN:
+                continue;
+              case PieceType.P2_KING:
+                break;
+              case PieceType.P2_MAGE:
+                break;
+              case PieceType.P2_PAWN:
+                break;
+              case PieceType.P2_WARRIOR:
+                break;
+              case PieceType.P2_ASSASSIN:
+                break;
+              case PieceType.NO_PIECE:
+                continue;
+              default:
+                break;
+            }
+            break;
+          // assassin can only use abilities on enemy pieces
+          case PieceType.P1_ASSASSIN:
+            switch(destinationSquarePiece.type) {
+              case PieceType.P1_KING:
+                continue;
+              case PieceType.P1_MAGE:
+                continue;
+              case PieceType.P1_PAWN:
+                continue;
+              case PieceType.P1_WARRIOR:
+                continue;
+              case PieceType.P1_ASSASSIN:
+                continue;
+              case PieceType.P2_KING:
+                break;
+              case PieceType.P2_MAGE:
+                break;
+              case PieceType.P2_PAWN:
+                break;
+              case PieceType.P2_WARRIOR:
+                break;
+              case PieceType.P2_ASSASSIN:
+                break;
+              case PieceType.NO_PIECE:
+                continue;
+              default:
+                break;
+            }
+            break;
+
+          // king can only use abilities on enemy pieces
+          case PieceType.P2_KING:
+            switch(destinationSquarePiece.type) {
+              case PieceType.P1_KING:
+                break;
+              case PieceType.P1_MAGE:
+                break;
+              case PieceType.P1_PAWN:
+                break;
+              case PieceType.P1_WARRIOR:
+                break;
+              case PieceType.P1_ASSASSIN:
+                break;
+              case PieceType.P2_KING:
+                continue;
+              case PieceType.P2_MAGE:
+                continue;
+              case PieceType.P2_PAWN:
+                continue;
+              case PieceType.P2_WARRIOR:
+                continue;
+              case PieceType.P2_ASSASSIN:
+                continue;
+              case PieceType.NO_PIECE:
+                continue;
+              default:
+                break;
+            }
+          // mage can only use abilities on enemy pieces
+          case PieceType.P2_MAGE:
+            switch(destinationSquarePiece.type) {
+              case PieceType.P1_KING:
+                break;
+              case PieceType.P1_MAGE:
+                break;
+              case PieceType.P1_PAWN:
+                break;
+              case PieceType.P1_WARRIOR:
+                break;
+              case PieceType.P1_ASSASSIN:
+                break;
+              case PieceType.P2_KING:
+                continue;
+              case PieceType.P2_MAGE:
+                continue;
+              case PieceType.P2_PAWN:
+                continue;
+              case PieceType.P2_WARRIOR:
+                continue;
+              case PieceType.P2_ASSASSIN:
+                continue;
+              case PieceType.NO_PIECE:
+                continue;
+              default:
+                break;
+            }
+            break;
+          // pawn can only use abilities on enemy pieces
+          case PieceType.P2_PAWN:
+            switch(destinationSquarePiece.type) {
+              case PieceType.P1_KING:
+                break;
+              case PieceType.P1_MAGE:
+                break;
+              case PieceType.P1_PAWN:
+                break;
+              case PieceType.P1_WARRIOR:
+                break;
+              case PieceType.P1_ASSASSIN:
+                break;
+              case PieceType.P2_KING:
+                continue;
+              case PieceType.P2_MAGE:
+                continue;
+              case PieceType.P2_PAWN:
+                continue;
+              case PieceType.P2_WARRIOR:
+                continue;
+              case PieceType.P2_ASSASSIN:
+                continue;
+              case PieceType.NO_PIECE:
+                continue;
+              default:
+                break;
+            }
+            break;
+          // warrior can only use abilities on enemy pieces
+          case PieceType.P2_WARRIOR:
+            switch(destinationSquarePiece.type) {
+              case PieceType.P1_KING:
+                break;
+              case PieceType.P1_MAGE:
+                break;
+              case PieceType.P1_PAWN:
+                break;
+              case PieceType.P1_WARRIOR:
+                break;
+              case PieceType.P1_ASSASSIN:
+                break;
+              case PieceType.P2_KING:
+                continue;
+              case PieceType.P2_MAGE:
+                continue;
+              case PieceType.P2_PAWN:
+                continue;
+              case PieceType.P2_WARRIOR:
+                continue;
+              case PieceType.P2_ASSASSIN:
+                continue;
+              case PieceType.NO_PIECE:
+                continue;
+              default:
+                break;
+            }
+            break;
+          // assassin can only use abilities on enemy pieces
+          case PieceType.P2_ASSASSIN:
+            switch(destinationSquarePiece.type) {
+              case PieceType.P1_KING:
+                break;
+              case PieceType.P1_MAGE:
+                break;
+              case PieceType.P1_PAWN:
+                break;
+              case PieceType.P1_WARRIOR:
+                break;
+              case PieceType.P1_ASSASSIN:
+                break;
+              case PieceType.P2_KING:
+                continue;
+              case PieceType.P2_MAGE:
+                continue;
+              case PieceType.P2_PAWN:
+                continue;
+              case PieceType.P2_WARRIOR:
+                continue;
+              case PieceType.P2_ASSASSIN:
+                continue;
+              case PieceType.NO_PIECE:
+                continue;
+              default:
+                break;
+            }
+            break;
+          case PieceType.NO_PIECE:
+            break;
+          default:
+            break;
+        }
+
+        let p = new PlayerAction(constants.MOVE_SKIP, constants.MOVE_SKIP, currentAbility.abilitySrcIdx, currentAbility.abilityDstIdx);
+        retval.push(p);
+      }
+    }
+    // player can skip both move and ability
+    let p = new PlayerAction(constants.MOVE_SKIP, constants.MOVE_SKIP, constants.ABILITY_SKIP, constants.ABILITY_SKIP);
+    retval.push(p);
+    return retval;
+  }
+  
   makeAction(moveSrcIdx: number, moveDstIdx: number, abilitySrcIdx: number, abilityDstIdx: number): UndoInfo {
     var undoInfo = new UndoInfo()
     undoInfo.moveSrcIdx = moveSrcIdx
