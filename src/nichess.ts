@@ -3,7 +3,9 @@ import {
   pieceTypeToString, 
   generateLegalMovesOnAnEmptyBoard,
   generateLegalAbilitiesOnAnEmptyBoard,
-  generateSquareToNeighboringSquares
+  generateSquareToNeighboringSquares,
+  player1OrEmpty,
+  player2OrEmpty
   } from './util'
 
 export enum Player {
@@ -64,11 +66,13 @@ export class PlayerAction {
 }
 
 export class UndoInfo {
-  public affectedPieces: Piece[]
+  public affectedPieces: Array<Piece>
   public moveSrcIdx: number
   public moveDstIdx: number
   public abilityType: AbilityType
-  constructor() {}
+  constructor() {
+    this.affectedPieces = new Array<Piece>() 
+  }
 }
 
 export class GameCache {
@@ -868,15 +872,229 @@ export class Game {
     return retval;
   }
   
+/*
+ * Assumes that the move and ability are legal.
+ * If the ability is not useful (i.e. does not alter the game state), it's converted to
+ * AbilityType.NO_ABILITY.
+ * Checking whether ability is useful makes the function ~1.5% slower.
+ */
   makeAction(moveSrcIdx: number, moveDstIdx: number, abilitySrcIdx: number, abilityDstIdx: number): UndoInfo {
-    var undoInfo = new UndoInfo()
-    undoInfo.moveSrcIdx = moveSrcIdx
-    undoInfo.moveDstIdx = moveDstIdx
-    if(moveSrcIdx !== constants.MOVE_SKIP) {
-      this.makeMove(moveSrcIdx, moveDstIdx)
+    let undoInfo = new UndoInfo();
+    undoInfo.moveSrcIdx = moveSrcIdx;
+    undoInfo.moveDstIdx = moveDstIdx;
+    if(moveSrcIdx != constants.MOVE_SKIP) {
+      this.makeMove(moveSrcIdx, moveDstIdx);
     }
+    if(abilitySrcIdx != constants.ABILITY_SKIP) {
+      let abilitySrcPiece: Piece = this.board[abilitySrcIdx];
+      let abilityDstPiece: Piece = this.board[abilityDstIdx];
+      let neighboringPiece: Piece;
+      let neighboringSquare: number;
+      switch(abilitySrcPiece.type) {
+        // king does single target damage
+        case PieceType.P1_KING:
+          if(player1OrEmpty(abilityDstPiece.type)) {
+            undoInfo.abilityType = AbilityType.NO_ABILITY;
+            break;
+          }
+          abilityDstPiece.healthPoints -= constants.KING_ABILITY_POINTS;
+          undoInfo.abilityType = AbilityType.KING_DAMAGE;
+          undoInfo.affectedPieces.push(abilityDstPiece);
+          if(abilityDstPiece.healthPoints <= 0) {
+            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+          }
+          break;
+        // mage damages attacked piece and all enemy pieces that are touching it
+        case PieceType.P1_MAGE:
+          if(player1OrEmpty(abilityDstPiece.type)) {
+            undoInfo.abilityType = AbilityType.NO_ABILITY;
+            break;
+          }
+          abilityDstPiece.healthPoints -= constants.MAGE_ABILITY_POINTS;
+          undoInfo.abilityType = AbilityType.MAGE_DAMAGE;
+          undoInfo.affectedPieces.push(abilityDstPiece);
+          if(abilityDstPiece.healthPoints <= 0) {
+            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+          }
+          for(let i = 0; i < this.gameCache.squareToNeighboringSquares[abilityDstIdx].length; i++) {
+            neighboringSquare = this.gameCache.squareToNeighboringSquares[abilityDstIdx][i];
+            neighboringPiece = this.board[neighboringSquare];
+            if(player1OrEmpty(neighboringPiece.type)) continue;  // don't damage your own pieces
+            neighboringPiece.healthPoints -= constants.MAGE_ABILITY_POINTS;
+            undoInfo.affectedPieces.push(neighboringPiece);
+            if(neighboringPiece.healthPoints <= 0) {
+              this.board[neighboringSquare] = new Piece(PieceType.NO_PIECE, 0, neighboringSquare);
+            }
+          }
+          break;
+        case PieceType.P1_PAWN:
+          if(player1OrEmpty(abilityDstPiece.type)) {
+            undoInfo.abilityType = AbilityType.NO_ABILITY;
+            break;
+          }
+          abilityDstPiece.healthPoints -= constants.PAWN_ABILITY_POINTS;
+          undoInfo.abilityType = AbilityType.PAWN_DAMAGE;
+          undoInfo.affectedPieces.push(abilityDstPiece);
+          if(abilityDstPiece.healthPoints <= 0) {
+            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+          }
+          break;
+        case PieceType.P1_WARRIOR:
+          if(player1OrEmpty(abilityDstPiece.type)) {
+            undoInfo.abilityType = AbilityType.NO_ABILITY;
+            break;
+          }
+          abilityDstPiece.healthPoints -= constants.WARRIOR_ABILITY_POINTS;
+          undoInfo.abilityType = AbilityType.WARRIOR_DAMAGE;
+          undoInfo.affectedPieces.push(abilityDstPiece);
+          if(abilityDstPiece.healthPoints <= 0) {
+            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+          }
+          break;
+        case PieceType.P1_ASSASSIN:
+          if(player1OrEmpty(abilityDstPiece.type)) {
+            undoInfo.abilityType = AbilityType.NO_ABILITY;
+            break;
+          }
+          abilityDstPiece.healthPoints -= constants.ASSASSIN_ABILITY_POINTS;
+          undoInfo.abilityType = AbilityType.ASSASSIN_DAMAGE;
+          undoInfo.affectedPieces[0] = abilityDstPiece;
+          if(abilityDstPiece.healthPoints <= 0) {
+            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+          }
+          break;
+        case PieceType.P2_KING:
+          if(player2OrEmpty(abilityDstPiece.type)) {
+            undoInfo.abilityType = AbilityType.NO_ABILITY;
+            break;
+          }
+          abilityDstPiece.healthPoints -= constants.KING_ABILITY_POINTS;
+          undoInfo.abilityType = AbilityType.KING_DAMAGE;
+          undoInfo.affectedPieces.push(abilityDstPiece);
+          if(abilityDstPiece.healthPoints <= 0) {
+            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+          }
+          break;
+        case PieceType.P2_MAGE:
+          if(player2OrEmpty(abilityDstPiece.type)) {
+            undoInfo.abilityType = AbilityType.NO_ABILITY;
+            break;
+          }
+          abilityDstPiece.healthPoints -= constants.MAGE_ABILITY_POINTS;
+          undoInfo.abilityType = AbilityType.MAGE_DAMAGE;
+          undoInfo.affectedPieces.push(abilityDstPiece);
+          if(abilityDstPiece.healthPoints <= 0) {
+            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+          }
+          for(let i = 0; i < this.gameCache.squareToNeighboringSquares[abilityDstIdx].length; i++) {
+            neighboringSquare = this.gameCache.squareToNeighboringSquares[abilityDstIdx][i];
+            neighboringPiece = this.board[neighboringSquare];
+            if(player2OrEmpty(neighboringPiece.type)) continue;  // don't damage your own pieces
+            neighboringPiece.healthPoints -= constants.MAGE_ABILITY_POINTS;
+            // i+1 because 0 is for abilityDstPiece
+            undoInfo.affectedPieces.push(neighboringPiece);
+            if(neighboringPiece.healthPoints <= 0) {
+              this.board[neighboringSquare] = new Piece(PieceType.NO_PIECE, 0, neighboringSquare);
+            }
+          }
+          break;
+        case PieceType.P2_PAWN:
+          if(player2OrEmpty(abilityDstPiece.type)) {
+            undoInfo.abilityType = AbilityType.NO_ABILITY;
+            break;
+          }
+          abilityDstPiece.healthPoints -= constants.PAWN_ABILITY_POINTS;
+          undoInfo.abilityType = AbilityType.PAWN_DAMAGE;
+          undoInfo.affectedPieces.push(abilityDstPiece);
+          if(abilityDstPiece.healthPoints <= 0) {
+            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+          }
+          break;
+        case PieceType.P2_WARRIOR:
+          if(player2OrEmpty(abilityDstPiece.type)) {
+            undoInfo.abilityType = AbilityType.NO_ABILITY;
+            break;
+          }
+          abilityDstPiece.healthPoints -= constants.WARRIOR_ABILITY_POINTS;
+          undoInfo.abilityType = AbilityType.WARRIOR_DAMAGE;
+          undoInfo.affectedPieces.push(abilityDstPiece);
+          if(abilityDstPiece.healthPoints <= 0) {
+            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+          }
+          break;
+        case PieceType.P2_ASSASSIN:
+          if(player2OrEmpty(abilityDstPiece.type)) {
+            undoInfo.abilityType = AbilityType.NO_ABILITY;
+            break;
+          }
+          abilityDstPiece.healthPoints -= constants.ASSASSIN_ABILITY_POINTS;
+          undoInfo.abilityType = AbilityType.ASSASSIN_DAMAGE;
+          undoInfo.affectedPieces.push(abilityDstPiece);
+          if(abilityDstPiece.healthPoints <= 0) {
+            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+          }
+          break;
+      }
+    } else {
+      undoInfo.abilityType = AbilityType.NO_ABILITY;
+    } 
+    this.moveNumber += 1;
+    this.currentPlayer = 1 - this.currentPlayer;
+    return undoInfo;
+  }
 
-    return undoInfo
+  undoAction(undoInfo: UndoInfo): void {
+    // undo ability
+    let affectedPiece: Piece;
+    switch(undoInfo.abilityType) {
+      case AbilityType.KING_DAMAGE:
+        affectedPiece = undoInfo.affectedPieces[0];
+        affectedPiece.healthPoints += constants.KING_ABILITY_POINTS;
+        if(this.board[affectedPiece.squareIndex].type == PieceType.NO_PIECE) {
+          this.board[affectedPiece.squareIndex] = affectedPiece;
+        }
+        break;
+      case AbilityType.MAGE_DAMAGE:
+        for(let i = 0; i < undoInfo.affectedPieces.length; i++){
+          affectedPiece = undoInfo.affectedPieces[i];
+          affectedPiece.healthPoints += constants.MAGE_ABILITY_POINTS;
+          if(this.board[affectedPiece.squareIndex].type == PieceType.NO_PIECE) {
+            this.board[affectedPiece.squareIndex] = affectedPiece;
+          }
+        }
+        break;
+      case AbilityType.WARRIOR_DAMAGE:
+        affectedPiece = undoInfo.affectedPieces[0];
+        affectedPiece.healthPoints += constants.WARRIOR_ABILITY_POINTS;
+        if(this.board[affectedPiece.squareIndex].type == PieceType.NO_PIECE) {
+          this.board[affectedPiece.squareIndex] = affectedPiece;
+        }
+        break;
+      case AbilityType.ASSASSIN_DAMAGE:
+        affectedPiece = undoInfo.affectedPieces[0];
+        affectedPiece.healthPoints += constants.ASSASSIN_ABILITY_POINTS;
+        if(this.board[affectedPiece.squareIndex].type == PieceType.NO_PIECE) {
+          this.board[affectedPiece.squareIndex] = affectedPiece;
+        }
+        break;
+      case AbilityType.PAWN_DAMAGE:
+        affectedPiece = undoInfo.affectedPieces[0];
+        affectedPiece.healthPoints += constants.PAWN_ABILITY_POINTS;
+        if(this.board[affectedPiece.squareIndex].type == PieceType.NO_PIECE) {
+          this.board[affectedPiece.squareIndex] = affectedPiece;
+        }
+        break;
+      case AbilityType.NO_ABILITY:
+        break;
+      default:
+        break;
+    }
+    // undo move
+    if(undoInfo.moveSrcIdx != constants.MOVE_SKIP) {
+      this.undoMove(undoInfo.moveSrcIdx, undoInfo.moveDstIdx);
+    }
+    this.moveNumber -= 1;
+    this.currentPlayer = 1 - this.currentPlayer;
   }
 
   dump(): string {
