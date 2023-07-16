@@ -1128,6 +1128,23 @@ export class Game {
 
 }
 
-export function coordinatesToBoardIndex(column: number, row: number) {
+export function coordinatesToBoardIndex(column: number, row: number): number {
   return column + row * constants.NUM_COLUMNS
+}
+
+export function perft(game: Game, depth: number): number {
+  let nodes = 0
+  let legalActions: Array<PlayerAction> = game.usefulLegalActions()
+  if(depth == 1) {
+    return legalActions.length
+  }
+  let pa: PlayerAction
+  let ui: UndoInfo
+  for(let i = 0; i < legalActions.length; i++) {
+    pa = legalActions[i]
+    ui = game.makeAction(pa.moveSrcIdx, pa.moveDstIdx, pa.abilitySrcIdx, pa.abilityDstIdx)
+    nodes += perft(game, depth - 1)
+    game.undoAction(ui)
+  }
+  return nodes
 }
