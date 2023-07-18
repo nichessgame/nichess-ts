@@ -20,7 +20,7 @@ export const ASSASSIN_ABILITY_POINTS = 120;
 export const NUM_PLAYERS = 2;
 export const NUM_PIECE_TYPE = 11;
 
-// piece index is not the same thing as board(square) index
+// piece index is not the same thing as board (square) index
 // it is used as an array index for faster access to a specific piece
 export const MAGE_PIECE_INDEX = 0;
 export const ASSASSIN_PIECE_INDEX = 1;
