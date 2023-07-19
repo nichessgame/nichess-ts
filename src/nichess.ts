@@ -89,7 +89,7 @@ export class GameCache {
 }
 
 export class Game {
-  public board: Piece[]
+  public board: Array<Piece> = new Array()
   public p1King: Piece
   public p2King: Piece
   public playerToPieces: Array<Piece[]> = new Array()
@@ -1780,12 +1780,6 @@ export class Game {
     return retval
   }
   
-  boardFromString(encodedBoard: string) {
-    this.currentPlayer = parseInt(encodedBoard.charAt(0))
-    this.moveNumber = 0
-    // TODO
-  }
-
   isActionLegal(moveSrcIdx: number, moveDstIdx: number, abilitySrcIdx: number, abilityDstIdx: number): boolean {
     // It's important for this method to not have many exit points because it's altering the game
     // state. If a return statement is between makeMove and undoMove, game state will remain changed
@@ -2271,6 +2265,142 @@ export class Game {
     } else if(this.p2King.healthPoints <= 0) {
       return Player.PLAYER_1
     }
+  }
+
+  boardFromString(encodedBoard: string): void {
+    this.currentPlayer = Number(encodedBoard.charAt(0));
+    this.moveNumber = 0;
+    // pieces need to exist in the piece array even if they're dead
+    // first all pieces are initialized as dead, then they're replaced if found in the encodedBoard
+    let p1Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
+    p1Pieces[constants.KING_PIECE_INDEX] = new Piece(PieceType.P1_KING, 0, 0);
+    p1Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece(PieceType.P1_PAWN, 0, 0);
+    p1Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece(PieceType.P1_PAWN, 0, 0);
+    p1Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece(PieceType.P1_PAWN, 0, 0);
+    p1Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece(PieceType.P1_ASSASSIN, 0, 0);
+    p1Pieces[constants.MAGE_PIECE_INDEX] = new Piece(PieceType.P1_MAGE, 0, 0);
+    p1Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece(PieceType.P1_WARRIOR, 0, 0);
+
+    let p2Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
+    p2Pieces[constants.KING_PIECE_INDEX] = new Piece(PieceType.P2_KING, 0, 0);
+    p2Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece(PieceType.P2_PAWN, 0, 0);
+    p2Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece(PieceType.P2_PAWN, 0, 0);
+    p2Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece(PieceType.P2_PAWN, 0, 0);
+    p2Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece(PieceType.P2_ASSASSIN, 0, 0);
+    p2Pieces[constants.MAGE_PIECE_INDEX] = new Piece(PieceType.P2_MAGE, 0, 0);
+    p2Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece(PieceType.P2_WARRIOR, 0, 0);
+
+
+    let b1: string = encodedBoard.substring(2);
+    let ar1: string[] = b1.split(",")
+    ar1.pop() // last element is an empty string
+    let boardIdx = 0;
+    ar1.forEach(item => {
+      let ar2 = item.split("-")
+      if(ar2[0] === "empty") {
+        this.board[boardIdx] = new Piece(PieceType.NO_PIECE, 0, boardIdx)
+      } else {
+        let healthPoints = Number(ar2[2])
+        let pieceType: string = ar2[0] + ar2[1]
+        if(pieceType == "0king") {
+          this.board[boardIdx] = new Piece(PieceType.P1_KING, healthPoints, boardIdx);
+          p1Pieces[constants.KING_PIECE_INDEX] = this.board[boardIdx];
+        } else if(pieceType == "0pawn") {
+          this.board[boardIdx] = new Piece(PieceType.P1_PAWN, healthPoints, boardIdx);
+          if(p1Pieces[constants.PAWN_1_PIECE_INDEX].healthPoints <= 0) {
+            p1Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[boardIdx];
+          } else if(p1Pieces[constants.PAWN_2_PIECE_INDEX].healthPoints <= 0) {
+            p1Pieces[constants.PAWN_2_PIECE_INDEX] = this.board[boardIdx];
+          } else if(p1Pieces[constants.PAWN_3_PIECE_INDEX].healthPoints <= 0) {
+            p1Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[boardIdx];
+          } else {
+            throw "Already found 3 living PLAYER_1 Pawns";
+          }
+        } else if(pieceType == "0mage") {
+          this.board[boardIdx] = new Piece(PieceType.P1_MAGE, healthPoints, boardIdx);
+          p1Pieces[constants.MAGE_PIECE_INDEX] = this.board[boardIdx];
+        } else if(pieceType == "0assassin") {
+          this.board[boardIdx] = new Piece(PieceType.P1_ASSASSIN, healthPoints, boardIdx);
+          p1Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[boardIdx];
+        } else if(pieceType == "0warrior") {
+          this.board[boardIdx] = new Piece(PieceType.P1_WARRIOR, healthPoints, boardIdx);
+          p1Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[boardIdx];
+        } else if(pieceType == "1king") {
+          this.board[boardIdx] = new Piece(PieceType.P2_KING, healthPoints, boardIdx);
+          p2Pieces[constants.KING_PIECE_INDEX] = this.board[boardIdx];
+        } else if(pieceType == "1pawn") {
+          this.board[boardIdx] = new Piece(PieceType.P2_PAWN, healthPoints, boardIdx);
+          if(p2Pieces[constants.PAWN_1_PIECE_INDEX].healthPoints <= 0) {
+            p2Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[boardIdx];
+          } else if(p2Pieces[constants.PAWN_2_PIECE_INDEX].healthPoints <= 0) {
+            p2Pieces[constants.PAWN_2_PIECE_INDEX] = this.board[boardIdx];
+          } else if(p2Pieces[constants.PAWN_3_PIECE_INDEX].healthPoints <= 0) {
+            p2Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[boardIdx];
+          } else {
+            throw "Already found 3 living PLAYER_2 Pawns";
+          }
+        } else if(pieceType == "1mage") {
+          this.board[boardIdx] = new Piece(PieceType.P2_MAGE, healthPoints, boardIdx);
+          p2Pieces[constants.MAGE_PIECE_INDEX] = this.board[boardIdx];
+        } else if(pieceType == "1assassin") {
+          this.board[boardIdx] = new Piece(PieceType.P2_ASSASSIN, healthPoints, boardIdx);
+          p2Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[boardIdx];
+        } else if(pieceType == "1warrior") {
+          this.board[boardIdx] = new Piece(PieceType.P2_WARRIOR, healthPoints, boardIdx);
+          p2Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[boardIdx];
+        }
+      }
+      boardIdx += 1;
+    })
+    this.playerToPieces[Player.PLAYER_1] = p1Pieces;
+    this.playerToPieces[Player.PLAYER_2] = p2Pieces;
+  }
+
+  boardToString(): string {
+    let retval = "";
+    retval += this.currentPlayer + "|";
+    let currentPiece: Piece;
+    for(let i = 0; i < constants.NUM_SQUARES; i++) {
+      currentPiece = this.board[i];
+      if(currentPiece.type == PieceType.NO_PIECE) {
+        retval += "empty,";
+      } else {
+        switch(currentPiece.type) {
+          case PieceType.P1_KING:
+            retval += "0-king-";
+            break;
+          case PieceType.P1_MAGE:
+            retval += "0-mage-";
+            break;
+          case PieceType.P1_PAWN:
+            retval += "0-pawn-";
+            break;
+          case PieceType.P1_WARRIOR:
+            retval += "0-warrior-";
+            break;
+          case PieceType.P1_ASSASSIN:
+            retval += "0-assassin-";
+            break;
+          case PieceType.P2_KING:
+            retval += "1-king-";
+            break;
+          case PieceType.P2_MAGE:
+            retval += "1-mage-";
+            break;
+          case PieceType.P2_PAWN:
+            retval += "1-pawn-";
+            break;
+          case PieceType.P2_WARRIOR:
+            retval += "1-warrior-";
+            break;
+          case PieceType.P2_ASSASSIN:
+            retval += "1-assassin-";
+            break;
+        }
+        retval += currentPiece.healthPoints + ",";
+      }
+    }
+    return retval;
   }
 }
 
