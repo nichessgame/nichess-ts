@@ -160,7 +160,7 @@ export class Game {
     this.board[coordinatesToBoardIndex(2,4)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(2,4));
     this.board[coordinatesToBoardIndex(2,5)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(2,5));
     this.board[coordinatesToBoardIndex(2,7)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(2,7));
-    this.board[coordinatesToBoardIndex(3,0)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(3,3));
+    this.board[coordinatesToBoardIndex(3,0)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(3,0));
     this.board[coordinatesToBoardIndex(3,2)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(3,2));
     this.board[coordinatesToBoardIndex(3,3)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(3,3));
     this.board[coordinatesToBoardIndex(3,4)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(3,4));
