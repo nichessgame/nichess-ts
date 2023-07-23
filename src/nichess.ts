@@ -203,6 +203,8 @@ export class Game {
     p1Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[coordinatesToBoardIndex(5,1)];
     this.playerToPieces.push(p1Pieces);
 
+    this.p1King = p1Pieces[constants.KING_PIECE_INDEX];
+
     let p2Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
     p2Pieces[constants.KING_PIECE_INDEX] = this.board[coordinatesToBoardIndex(7,7)];
     p2Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[coordinatesToBoardIndex(7,6)];
@@ -212,6 +214,8 @@ export class Game {
     p2Pieces[constants.MAGE_PIECE_INDEX] = this.board[coordinatesToBoardIndex(3,6)];
     p2Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[coordinatesToBoardIndex(2,6)];
     this.playerToPieces.push(p2Pieces);
+
+    this.p2King = p2Pieces[constants.KING_PIECE_INDEX];
   }
 
   usefulLegalActions(): Array<PlayerAction> {
@@ -2280,6 +2284,8 @@ export class Game {
     p1Pieces[constants.MAGE_PIECE_INDEX] = new Piece(PieceType.P1_MAGE, 0, 0);
     p1Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece(PieceType.P1_WARRIOR, 0, 0);
 
+    this.p1King = p1Pieces[constants.KING_PIECE_INDEX]
+
     let p2Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
     p2Pieces[constants.KING_PIECE_INDEX] = new Piece(PieceType.P2_KING, 0, 0);
     p2Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece(PieceType.P2_PAWN, 0, 0);
@@ -2289,6 +2295,7 @@ export class Game {
     p2Pieces[constants.MAGE_PIECE_INDEX] = new Piece(PieceType.P2_MAGE, 0, 0);
     p2Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece(PieceType.P2_WARRIOR, 0, 0);
 
+    this.p2King = p2Pieces[constants.KING_PIECE_INDEX]
 
     let b1: string = encodedBoard.substring(2);
     let ar1: string[] = b1.split(",")
@@ -2304,6 +2311,7 @@ export class Game {
         if(pieceType == "0king") {
           this.board[boardIdx] = new Piece(PieceType.P1_KING, healthPoints, boardIdx);
           p1Pieces[constants.KING_PIECE_INDEX] = this.board[boardIdx];
+          this.p1King = this.board[boardIdx];
         } else if(pieceType == "0pawn") {
           this.board[boardIdx] = new Piece(PieceType.P1_PAWN, healthPoints, boardIdx);
           if(p1Pieces[constants.PAWN_1_PIECE_INDEX].healthPoints <= 0) {
@@ -2327,6 +2335,7 @@ export class Game {
         } else if(pieceType == "1king") {
           this.board[boardIdx] = new Piece(PieceType.P2_KING, healthPoints, boardIdx);
           p2Pieces[constants.KING_PIECE_INDEX] = this.board[boardIdx];
+          this.p2King = this.board[boardIdx];
         } else if(pieceType == "1pawn") {
           this.board[boardIdx] = new Piece(PieceType.P2_PAWN, healthPoints, boardIdx);
           if(p2Pieces[constants.PAWN_1_PIECE_INDEX].healthPoints <= 0) {
