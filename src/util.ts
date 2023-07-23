@@ -99,35 +99,6 @@ export function player2OrEmpty(pt: PieceType): boolean {
   }
 }
 
-export function pieceBelongsToPlayer(pt: PieceType, player: Player): boolean {
-  switch(pt) {
-    case PieceType.P1_KING:
-      return player === Player.PLAYER_1
-    case PieceType.P1_MAGE:
-      return player === Player.PLAYER_1
-    case PieceType.P1_PAWN:
-      return player === Player.PLAYER_1
-    case PieceType.P1_WARRIOR:
-      return player === Player.PLAYER_1
-    case PieceType.P1_ASSASSIN:
-      return player === Player.PLAYER_1
-    case PieceType.P2_KING:
-      return player === Player.PLAYER_2
-    case PieceType.P2_MAGE:
-      return player === Player.PLAYER_2
-    case PieceType.P2_PAWN:
-      return player === Player.PLAYER_2
-    case PieceType.P2_WARRIOR:
-      return player === Player.PLAYER_2
-    case PieceType.P2_ASSASSIN:
-      return player === Player.PLAYER_2
-    case PieceType.NO_PIECE:
-      return false
-    default:
-      return false
-  }
-}
-
 export function isOffBoard(x: number, y: number): boolean {
   if(x >= constants.NUM_COLUMNS || x < 0 || y >= constants.NUM_ROWS || y < 0)
     return true
