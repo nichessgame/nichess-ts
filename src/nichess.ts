@@ -6,6 +6,7 @@ import {
   generateSquareToNeighboringSquares,
   player1OrEmpty,
   player2OrEmpty,
+  pieceBelongsToPlayer,
   isSquareIndexOffBoard,
   } from './util'
 
@@ -2460,33 +2461,4 @@ function isActionValid(moveSrcIdx: number, moveDstIdx: number, abilitySrcIdx: nu
     abilityValid = true
   }
   return moveValid && abilityValid
-}
-
-export function pieceBelongsToPlayer(pt: PieceType, player: Player): boolean {
-  switch(pt) {
-    case PieceType.P1_KING:
-      return player === Player.PLAYER_1
-    case PieceType.P1_MAGE:
-      return player === Player.PLAYER_1
-    case PieceType.P1_PAWN:
-      return player === Player.PLAYER_1
-    case PieceType.P1_WARRIOR:
-      return player === Player.PLAYER_1
-    case PieceType.P1_ASSASSIN:
-      return player === Player.PLAYER_1
-    case PieceType.P2_KING:
-      return player === Player.PLAYER_2
-    case PieceType.P2_MAGE:
-      return player === Player.PLAYER_2
-    case PieceType.P2_PAWN:
-      return player === Player.PLAYER_2
-    case PieceType.P2_WARRIOR:
-      return player === Player.PLAYER_2
-    case PieceType.P2_ASSASSIN:
-      return player === Player.PLAYER_2
-    case PieceType.NO_PIECE:
-      return false
-    default:
-      return false
-  }
 }
