@@ -29,10 +29,16 @@ export class Piece {
   public type: PieceType
   public healthPoints: number
   public squareIndex: number
-  constructor(type: PieceType, healthPoints: number, squareIndex: number) {
-    this.type = type
-    this.healthPoints = healthPoints
-    this.squareIndex = squareIndex 
+  constructor(params: {type?: PieceType, healthPoints?: number, squareIndex?: number, other?: Piece}) {
+    if(params.other === undefined) {
+      this.type = params.type
+      this.healthPoints = params.healthPoints
+      this.squareIndex = params.squareIndex
+    } else {
+      this.type = params.other.type
+      this.healthPoints = params.other.healthPoints
+      this.squareIndex = params.other.squareIndex
+    }
   }
 }
 
@@ -97,11 +103,132 @@ export class Game {
   public moveNumber: number
   public gameCache: GameCache
 
-  constructor(gameCache: GameCache, encodedBoard?: string) {
-    this.gameCache = gameCache
-    if(typeof encodedBoard !== 'undefined') {
-      this.boardFromString(encodedBoard)
-    } else {
+  // 3 possible constructors:
+  // 1) constructor(gameCache)
+  // 2) constructor(gameCache, encodedBoard)
+  // 3) constructor(other)
+  constructor(params: {gameCache?: GameCache, encodedBoard?: string, other?: Game}) {
+    if(params.encodedBoard !== undefined) { // 2)
+      this.gameCache = params.gameCache
+      this.boardFromString(params.encodedBoard)
+    } else if(params.other !== undefined) { // 3)
+      this.moveNumber = params.other.moveNumber;
+      this.currentPlayer = params.other.currentPlayer;
+      this.gameCache = params.other.gameCache;
+      for(let i = 0; i < constants.NUM_SQUARES; i++) {
+        this.board[i] = new Piece({other: params.other.board[i]});
+      }
+
+      let otherP1Pieces: Array<Piece> = params.other.playerToPieces[Player.PLAYER_1];
+      let otherP2Pieces: Array<Piece> = params.other.playerToPieces[Player.PLAYER_2];
+      let p1Pieces: Array<Piece> = new Array<Piece>(constants.NUM_STARTING_PIECES);
+
+      let otherP1King: Piece = otherP1Pieces[constants.KING_PIECE_INDEX];
+      if(otherP1King.healthPoints > 0) {
+        p1Pieces[constants.KING_PIECE_INDEX] = this.board[otherP1King.squareIndex];
+      } else {
+        p1Pieces[constants.KING_PIECE_INDEX] = new Piece({type: PieceType.P1_KING, healthPoints: otherP1King.healthPoints, squareIndex: otherP1King.squareIndex});
+      }
+      this.p1King = p1Pieces[constants.KING_PIECE_INDEX];
+
+      let otherP1Pawn1: Piece = otherP1Pieces[constants.PAWN_1_PIECE_INDEX];
+      if(otherP1Pawn1.healthPoints > 0) {
+        p1Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[otherP1Pawn1.squareIndex];
+      } else {
+        p1Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: otherP1Pawn1.healthPoints, squareIndex: otherP1Pawn1.squareIndex});
+      }
+
+      let otherP1Pawn2: Piece = otherP1Pieces[constants.PAWN_2_PIECE_INDEX];
+      if(otherP1Pawn2.healthPoints > 0) {
+        p1Pieces[constants.PAWN_2_PIECE_INDEX] = this.board[otherP1Pawn2.squareIndex];
+      } else {
+        p1Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: otherP1Pawn2.healthPoints, squareIndex: otherP1Pawn2.squareIndex});
+      }
+
+      let otherP1Assassin = otherP1Pieces[constants.ASSASSIN_PIECE_INDEX];
+      if(otherP1Assassin.healthPoints > 0) {
+        p1Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[otherP1Assassin.squareIndex];
+      } else {
+        p1Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece({type: PieceType.P1_ASSASSIN, healthPoints: otherP1Assassin.healthPoints, squareIndex: otherP1Assassin.squareIndex});
+      }
+
+      let otherP1Warrior = otherP1Pieces[constants.WARRIOR_PIECE_INDEX];
+      if(otherP1Warrior.healthPoints > 0) {
+        p1Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[otherP1Warrior.squareIndex];
+      } else {
+        p1Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece({type: PieceType.P1_WARRIOR, healthPoints: otherP1Warrior.healthPoints, squareIndex: otherP1Warrior.squareIndex});
+      }
+
+      let otherP1Mage = otherP1Pieces[constants.MAGE_PIECE_INDEX];
+      if(otherP1Mage.healthPoints > 0) {
+        p1Pieces[constants.MAGE_PIECE_INDEX] = this.board[otherP1Mage.squareIndex];
+      } else {
+        p1Pieces[constants.MAGE_PIECE_INDEX] = new Piece({type: PieceType.P1_MAGE, healthPoints: otherP1Mage.healthPoints, squareIndex: otherP1Mage.squareIndex});
+      }
+
+      let otherP1Pawn3 = otherP1Pieces[constants.PAWN_3_PIECE_INDEX];
+      if(otherP1Pawn3.healthPoints > 0) {
+        p1Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[otherP1Pawn3.squareIndex];
+      } else {
+        p1Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: otherP1Pawn3.healthPoints, squareIndex: otherP1Pawn3.squareIndex});
+      }
+
+      this.playerToPieces[Player.PLAYER_1] = p1Pieces;
+
+      let p2Pieces: Array<Piece> = new Array<Piece>(constants.NUM_STARTING_PIECES);
+      let otherP2King = otherP2Pieces[constants.KING_PIECE_INDEX];
+      if(otherP2King.healthPoints > 0) {
+        p2Pieces[constants.KING_PIECE_INDEX] = this.board[otherP2King.squareIndex];
+      } else {
+        p2Pieces[constants.KING_PIECE_INDEX] = new Piece({type: PieceType.P2_KING, healthPoints: otherP2King.healthPoints, squareIndex: otherP2King.squareIndex});
+      }
+      this.p2King = p2Pieces[constants.KING_PIECE_INDEX];
+
+      let otherP2Pawn1: Piece = otherP2Pieces[constants.PAWN_1_PIECE_INDEX];
+      if(otherP2Pawn1.healthPoints > 0) {
+        p2Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[otherP2Pawn1.squareIndex];
+      } else {
+        p2Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: otherP2Pawn1.healthPoints, squareIndex: otherP2Pawn1.squareIndex});
+      }
+
+      let otherP2Pawn2: Piece = otherP2Pieces[constants.PAWN_2_PIECE_INDEX];
+      if(otherP2Pawn2.healthPoints > 0) {
+        p2Pieces[constants.PAWN_2_PIECE_INDEX] = this.board[otherP2Pawn2.squareIndex];
+      } else {
+        p2Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: otherP2Pawn2.healthPoints, squareIndex: otherP2Pawn2.squareIndex});
+      }
+
+      let otherP2Assassin: Piece = otherP2Pieces[constants.ASSASSIN_PIECE_INDEX];
+      if(otherP2Assassin.healthPoints > 0) {
+        p2Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[otherP2Assassin.squareIndex];
+      } else {
+        p2Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece({type: PieceType.P2_ASSASSIN, healthPoints: otherP2Assassin.healthPoints, squareIndex: otherP2Assassin.squareIndex});
+      }
+
+      let otherP2Warrior: Piece = otherP2Pieces[constants.WARRIOR_PIECE_INDEX];
+      if(otherP2Warrior.healthPoints > 0) {
+        p2Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[otherP2Warrior.squareIndex];
+      } else {
+        p2Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece({type: PieceType.P2_WARRIOR, healthPoints: otherP2Warrior.healthPoints, squareIndex: otherP2Warrior.squareIndex});
+      }
+
+      let otherP2Mage: Piece = otherP2Pieces[constants.MAGE_PIECE_INDEX];
+      if(otherP2Mage.healthPoints > 0) {
+        p2Pieces[constants.MAGE_PIECE_INDEX] = this.board[otherP2Mage.squareIndex];
+      } else {
+        p2Pieces[constants.MAGE_PIECE_INDEX] = new Piece({type: PieceType.P2_MAGE, healthPoints: otherP2Mage.healthPoints, squareIndex: otherP2Mage.squareIndex});
+      }
+
+      let otherP2Pawn3: Piece = otherP2Pieces[constants.PAWN_3_PIECE_INDEX];
+      if(otherP2Pawn3.healthPoints > 0) {
+        p2Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[otherP2Pawn3.squareIndex];
+      } else {
+        p2Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: otherP2Pawn3.healthPoints, squareIndex: otherP2Pawn3.squareIndex});
+      }
+
+      this.playerToPieces[Player.PLAYER_2] = p2Pieces;
+    } else { // 1)
+      this.gameCache = params.gameCache
       this.reset()
     }
   }
@@ -109,7 +236,7 @@ export class Game {
   makeMove(moveSrcIdx: number, moveDstIdx: number): void {
     this.board[moveDstIdx] = this.board[moveSrcIdx]
     this.board[moveDstIdx].squareIndex = moveDstIdx
-    this.board[moveSrcIdx] = new Piece(PieceType.NO_PIECE, 0, moveSrcIdx)
+    this.board[moveSrcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: moveSrcIdx})
   }
 
   /*
@@ -118,7 +245,7 @@ export class Game {
   undoMove(moveSrcIdx: number, moveDstIdx: number): void {
     this.board[moveSrcIdx] = this.board[moveDstIdx]
     this.board[moveSrcIdx].squareIndex = moveSrcIdx
-    this.board[moveDstIdx] = new Piece(PieceType.NO_PIECE, 0, moveDstIdx)
+    this.board[moveDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: moveDstIdx})
   }
 
   reset(): void {
@@ -126,72 +253,72 @@ export class Game {
     this.currentPlayer = Player.PLAYER_1
     this.board = new Array<Piece>(constants.NUM_SQUARES)
     // Create starting position
-    this.board[coordinatesToBoardIndex(0,0)] = new Piece(PieceType.P1_KING, constants.KING_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(0,0));
-    this.board[coordinatesToBoardIndex(0,1)] = new Piece(PieceType.P1_PAWN, constants.PAWN_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(0,1));
-    this.board[coordinatesToBoardIndex(1,1)] = new Piece(PieceType.P1_PAWN, constants.PAWN_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(1,1));
-    this.board[coordinatesToBoardIndex(7,0)] = new Piece(PieceType.P1_ASSASSIN, constants.ASSASSIN_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(7,0));
-    this.board[coordinatesToBoardIndex(3,1)] = new Piece(PieceType.P1_WARRIOR, constants.WARRIOR_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(3,1));
-    this.board[coordinatesToBoardIndex(4,1)] = new Piece(PieceType.P1_MAGE, constants.MAGE_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(4,1));
-    this.board[coordinatesToBoardIndex(5,1)] = new Piece(PieceType.P1_PAWN, constants.PAWN_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(5,1));
+    this.board[coordinatesToBoardIndex(0,0)] = new Piece({type: PieceType.P1_KING, healthPoints: constants.KING_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(0,0)});
+    this.board[coordinatesToBoardIndex(0,1)] = new Piece({type: PieceType.P1_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(0,1)});
+    this.board[coordinatesToBoardIndex(1,1)] = new Piece({type: PieceType.P1_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(1,1)});
+    this.board[coordinatesToBoardIndex(7,0)] = new Piece({type: PieceType.P1_ASSASSIN, healthPoints: constants.ASSASSIN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(7,0)});
+    this.board[coordinatesToBoardIndex(3,1)] = new Piece({type: PieceType.P1_WARRIOR, healthPoints: constants.WARRIOR_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(3,1)});
+    this.board[coordinatesToBoardIndex(4,1)] = new Piece({type: PieceType.P1_MAGE, healthPoints: constants.MAGE_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(4,1)});
+    this.board[coordinatesToBoardIndex(5,1)] = new Piece({type: PieceType.P1_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(5,1)});
 
-    this.board[coordinatesToBoardIndex(7,7)] = new Piece(PieceType.P2_KING, constants.KING_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(7,7));
-    this.board[coordinatesToBoardIndex(7,6)] = new Piece(PieceType.P2_PAWN, constants.PAWN_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(7,6));
-    this.board[coordinatesToBoardIndex(6,6)] = new Piece(PieceType.P2_PAWN, constants.PAWN_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(6,6));
-    this.board[coordinatesToBoardIndex(0,7)] = new Piece(PieceType.P2_ASSASSIN, constants.ASSASSIN_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(0,7));
-    this.board[coordinatesToBoardIndex(4,6)] = new Piece(PieceType.P2_WARRIOR, constants.WARRIOR_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(4,6));
-    this.board[coordinatesToBoardIndex(3,6)] = new Piece(PieceType.P2_MAGE, constants.MAGE_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(3,6));
-    this.board[coordinatesToBoardIndex(2,6)] = new Piece(PieceType.P2_PAWN, constants.PAWN_STARTING_HEALTH_POINTS, coordinatesToBoardIndex(2,6));
+    this.board[coordinatesToBoardIndex(7,7)] = new Piece({type: PieceType.P2_KING, healthPoints: constants.KING_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(7,7)});
+    this.board[coordinatesToBoardIndex(7,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(7,6)});
+    this.board[coordinatesToBoardIndex(6,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(6,6)});
+    this.board[coordinatesToBoardIndex(0,7)] = new Piece({type: PieceType.P2_ASSASSIN, healthPoints: constants.ASSASSIN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(0,7)});
+    this.board[coordinatesToBoardIndex(4,6)] = new Piece({type: PieceType.P2_WARRIOR, healthPoints: constants.WARRIOR_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(4,6)});
+    this.board[coordinatesToBoardIndex(3,6)] = new Piece({type: PieceType.P2_MAGE, healthPoints: constants.MAGE_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(3,6)});
+    this.board[coordinatesToBoardIndex(2,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(2,6)});
 
-    this.board[coordinatesToBoardIndex(0,2)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(0,2));
-    this.board[coordinatesToBoardIndex(0,3)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(0,3));
-    this.board[coordinatesToBoardIndex(0,4)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(0,4));
-    this.board[coordinatesToBoardIndex(0,5)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(0,5));
-    this.board[coordinatesToBoardIndex(0,6)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(0,6));
-    this.board[coordinatesToBoardIndex(1,0)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(1,0));
-    this.board[coordinatesToBoardIndex(1,2)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(1,2));
-    this.board[coordinatesToBoardIndex(1,3)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(1,3));
-    this.board[coordinatesToBoardIndex(1,4)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(1,4));
-    this.board[coordinatesToBoardIndex(1,5)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(1,5));
-    this.board[coordinatesToBoardIndex(1,6)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(1,6));
-    this.board[coordinatesToBoardIndex(1,7)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(1,7));
-    this.board[coordinatesToBoardIndex(2,0)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(2,0));
-    this.board[coordinatesToBoardIndex(2,1)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(2,1));
-    this.board[coordinatesToBoardIndex(2,2)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(2,2));
-    this.board[coordinatesToBoardIndex(2,3)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(2,3));
-    this.board[coordinatesToBoardIndex(2,4)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(2,4));
-    this.board[coordinatesToBoardIndex(2,5)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(2,5));
-    this.board[coordinatesToBoardIndex(2,7)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(2,7));
-    this.board[coordinatesToBoardIndex(3,0)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(3,0));
-    this.board[coordinatesToBoardIndex(3,2)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(3,2));
-    this.board[coordinatesToBoardIndex(3,3)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(3,3));
-    this.board[coordinatesToBoardIndex(3,4)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(3,4));
-    this.board[coordinatesToBoardIndex(3,5)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(3,5));
-    this.board[coordinatesToBoardIndex(3,7)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(3,7));
-    this.board[coordinatesToBoardIndex(4,0)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(4,0));
-    this.board[coordinatesToBoardIndex(4,2)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(4,2));
-    this.board[coordinatesToBoardIndex(4,3)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(4,3));
-    this.board[coordinatesToBoardIndex(4,4)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(4,4));
-    this.board[coordinatesToBoardIndex(4,5)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(4,5));
-    this.board[coordinatesToBoardIndex(4,7)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(4,7));
-    this.board[coordinatesToBoardIndex(5,0)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(5,0));
-    this.board[coordinatesToBoardIndex(5,2)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(5,2));
-    this.board[coordinatesToBoardIndex(5,3)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(5,3));
-    this.board[coordinatesToBoardIndex(5,4)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(5,4));
-    this.board[coordinatesToBoardIndex(5,5)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(5,5));
-    this.board[coordinatesToBoardIndex(5,6)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(5,6));
-    this.board[coordinatesToBoardIndex(5,7)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(5,7));
-    this.board[coordinatesToBoardIndex(6,0)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(6,0));
-    this.board[coordinatesToBoardIndex(6,1)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(6,1));
-    this.board[coordinatesToBoardIndex(6,2)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(6,2));
-    this.board[coordinatesToBoardIndex(6,3)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(6,3));
-    this.board[coordinatesToBoardIndex(6,4)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(6,4));
-    this.board[coordinatesToBoardIndex(6,5)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(6,5));
-    this.board[coordinatesToBoardIndex(6,7)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(6,7));
-    this.board[coordinatesToBoardIndex(7,1)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(7,1));
-    this.board[coordinatesToBoardIndex(7,2)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(7,2));
-    this.board[coordinatesToBoardIndex(7,3)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(7,3));
-    this.board[coordinatesToBoardIndex(7,4)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(7,4));
-    this.board[coordinatesToBoardIndex(7,5)] = new Piece(PieceType.NO_PIECE, 0, coordinatesToBoardIndex(7,5));
+    this.board[coordinatesToBoardIndex(0,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(0,2)});
+    this.board[coordinatesToBoardIndex(0,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(0,3)});
+    this.board[coordinatesToBoardIndex(0,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(0,4)});
+    this.board[coordinatesToBoardIndex(0,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(0,5)});
+    this.board[coordinatesToBoardIndex(0,6)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(0,6)});
+    this.board[coordinatesToBoardIndex(1,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,0)});
+    this.board[coordinatesToBoardIndex(1,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,2)});
+    this.board[coordinatesToBoardIndex(1,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,3)});
+    this.board[coordinatesToBoardIndex(1,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,4)});
+    this.board[coordinatesToBoardIndex(1,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,5)});
+    this.board[coordinatesToBoardIndex(1,6)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,6)});
+    this.board[coordinatesToBoardIndex(1,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,7)});
+    this.board[coordinatesToBoardIndex(2,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,0)});
+    this.board[coordinatesToBoardIndex(2,1)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,1)});
+    this.board[coordinatesToBoardIndex(2,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,2)});
+    this.board[coordinatesToBoardIndex(2,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,3)});
+    this.board[coordinatesToBoardIndex(2,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,4)});
+    this.board[coordinatesToBoardIndex(2,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,5)});
+    this.board[coordinatesToBoardIndex(2,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,7)});
+    this.board[coordinatesToBoardIndex(3,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,0)});
+    this.board[coordinatesToBoardIndex(3,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,2)});
+    this.board[coordinatesToBoardIndex(3,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,3)});
+    this.board[coordinatesToBoardIndex(3,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,4)});
+    this.board[coordinatesToBoardIndex(3,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,5)});
+    this.board[coordinatesToBoardIndex(3,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,7)});
+    this.board[coordinatesToBoardIndex(4,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,0)});
+    this.board[coordinatesToBoardIndex(4,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,2)});
+    this.board[coordinatesToBoardIndex(4,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,3)});
+    this.board[coordinatesToBoardIndex(4,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,4)});
+    this.board[coordinatesToBoardIndex(4,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,5)});
+    this.board[coordinatesToBoardIndex(4,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,7)});
+    this.board[coordinatesToBoardIndex(5,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,0)});
+    this.board[coordinatesToBoardIndex(5,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,2)});
+    this.board[coordinatesToBoardIndex(5,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,3)});
+    this.board[coordinatesToBoardIndex(5,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,4)});
+    this.board[coordinatesToBoardIndex(5,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,5)});
+    this.board[coordinatesToBoardIndex(5,6)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,6)});
+    this.board[coordinatesToBoardIndex(5,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,7)});
+    this.board[coordinatesToBoardIndex(6,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,0)});
+    this.board[coordinatesToBoardIndex(6,1)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,1)});
+    this.board[coordinatesToBoardIndex(6,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,2)});
+    this.board[coordinatesToBoardIndex(6,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,3)});
+    this.board[coordinatesToBoardIndex(6,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,4)});
+    this.board[coordinatesToBoardIndex(6,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,5)});
+    this.board[coordinatesToBoardIndex(6,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,7)});
+    this.board[coordinatesToBoardIndex(7,1)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,1)});
+    this.board[coordinatesToBoardIndex(7,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,2)});
+    this.board[coordinatesToBoardIndex(7,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,3)});
+    this.board[coordinatesToBoardIndex(7,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,4)});
+    this.board[coordinatesToBoardIndex(7,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,5)});
 
     // Pieces are also kept in an array for faster access
     let p1Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
@@ -1565,7 +1692,7 @@ export class Game {
           undoInfo.abilityType = AbilityType.KING_DAMAGE;
           undoInfo.affectedPieces.push(abilityDstPiece);
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
           }
           break;
         // mage damages attacked piece and all enemy pieces that are touching it
@@ -1578,7 +1705,7 @@ export class Game {
           undoInfo.abilityType = AbilityType.MAGE_DAMAGE;
           undoInfo.affectedPieces.push(abilityDstPiece);
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
           }
           for(let i = 0; i < this.gameCache.squareToNeighboringSquares[abilityDstIdx].length; i++) {
             neighboringSquare = this.gameCache.squareToNeighboringSquares[abilityDstIdx][i];
@@ -1587,7 +1714,7 @@ export class Game {
             neighboringPiece.healthPoints -= constants.MAGE_ABILITY_POINTS;
             undoInfo.affectedPieces.push(neighboringPiece);
             if(neighboringPiece.healthPoints <= 0) {
-              this.board[neighboringSquare] = new Piece(PieceType.NO_PIECE, 0, neighboringSquare);
+              this.board[neighboringSquare] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
             }
           }
           break;
@@ -1600,7 +1727,7 @@ export class Game {
           undoInfo.abilityType = AbilityType.PAWN_DAMAGE;
           undoInfo.affectedPieces.push(abilityDstPiece);
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
           }
           break;
         case PieceType.P1_WARRIOR:
@@ -1612,7 +1739,7 @@ export class Game {
           undoInfo.abilityType = AbilityType.WARRIOR_DAMAGE;
           undoInfo.affectedPieces.push(abilityDstPiece);
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
           }
           break;
         case PieceType.P1_ASSASSIN:
@@ -1624,7 +1751,7 @@ export class Game {
           undoInfo.abilityType = AbilityType.ASSASSIN_DAMAGE;
           undoInfo.affectedPieces[0] = abilityDstPiece;
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
           }
           break;
         case PieceType.P2_KING:
@@ -1636,7 +1763,7 @@ export class Game {
           undoInfo.abilityType = AbilityType.KING_DAMAGE;
           undoInfo.affectedPieces.push(abilityDstPiece);
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
           }
           break;
         case PieceType.P2_MAGE:
@@ -1648,7 +1775,7 @@ export class Game {
           undoInfo.abilityType = AbilityType.MAGE_DAMAGE;
           undoInfo.affectedPieces.push(abilityDstPiece);
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
           }
           for(let i = 0; i < this.gameCache.squareToNeighboringSquares[abilityDstIdx].length; i++) {
             neighboringSquare = this.gameCache.squareToNeighboringSquares[abilityDstIdx][i];
@@ -1658,7 +1785,7 @@ export class Game {
             // i+1 because 0 is for abilityDstPiece
             undoInfo.affectedPieces.push(neighboringPiece);
             if(neighboringPiece.healthPoints <= 0) {
-              this.board[neighboringSquare] = new Piece(PieceType.NO_PIECE, 0, neighboringSquare);
+              this.board[neighboringSquare] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
             }
           }
           break;
@@ -1671,7 +1798,7 @@ export class Game {
           undoInfo.abilityType = AbilityType.PAWN_DAMAGE;
           undoInfo.affectedPieces.push(abilityDstPiece);
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
           }
           break;
         case PieceType.P2_WARRIOR:
@@ -1683,7 +1810,7 @@ export class Game {
           undoInfo.abilityType = AbilityType.WARRIOR_DAMAGE;
           undoInfo.affectedPieces.push(abilityDstPiece);
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
           }
           break;
         case PieceType.P2_ASSASSIN:
@@ -1695,7 +1822,7 @@ export class Game {
           undoInfo.abilityType = AbilityType.ASSASSIN_DAMAGE;
           undoInfo.affectedPieces.push(abilityDstPiece);
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece(PieceType.NO_PIECE, 0, abilityDstIdx);
+            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
           }
           break;
       }
@@ -2277,24 +2404,24 @@ export class Game {
     // pieces need to exist in the piece array even if they're dead
     // first all pieces are initialized as dead, then they're replaced if found in the encodedBoard
     let p1Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
-    p1Pieces[constants.KING_PIECE_INDEX] = new Piece(PieceType.P1_KING, 0, 0);
-    p1Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece(PieceType.P1_PAWN, 0, 0);
-    p1Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece(PieceType.P1_PAWN, 0, 0);
-    p1Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece(PieceType.P1_PAWN, 0, 0);
-    p1Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece(PieceType.P1_ASSASSIN, 0, 0);
-    p1Pieces[constants.MAGE_PIECE_INDEX] = new Piece(PieceType.P1_MAGE, 0, 0);
-    p1Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece(PieceType.P1_WARRIOR, 0, 0);
+    p1Pieces[constants.KING_PIECE_INDEX] = new Piece({type: PieceType.P1_KING, healthPoints: 0, squareIndex: 0});
+    p1Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: 0, squareIndex: 0});
+    p1Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: 0, squareIndex: 0});
+    p1Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: 0, squareIndex: 0});
+    p1Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece({type: PieceType.P1_ASSASSIN, healthPoints: 0, squareIndex: 0});
+    p1Pieces[constants.MAGE_PIECE_INDEX] = new Piece({type: PieceType.P1_MAGE, healthPoints: 0, squareIndex: 0});
+    p1Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece({type: PieceType.P1_WARRIOR, healthPoints: 0, squareIndex: 0});
 
     this.p1King = p1Pieces[constants.KING_PIECE_INDEX]
 
     let p2Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
-    p2Pieces[constants.KING_PIECE_INDEX] = new Piece(PieceType.P2_KING, 0, 0);
-    p2Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece(PieceType.P2_PAWN, 0, 0);
-    p2Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece(PieceType.P2_PAWN, 0, 0);
-    p2Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece(PieceType.P2_PAWN, 0, 0);
-    p2Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece(PieceType.P2_ASSASSIN, 0, 0);
-    p2Pieces[constants.MAGE_PIECE_INDEX] = new Piece(PieceType.P2_MAGE, 0, 0);
-    p2Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece(PieceType.P2_WARRIOR, 0, 0);
+    p2Pieces[constants.KING_PIECE_INDEX] = new Piece({type: PieceType.P2_KING, healthPoints: 0, squareIndex: 0});
+    p2Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: 0, squareIndex: 0});
+    p2Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: 0, squareIndex: 0});
+    p2Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: 0, squareIndex: 0});
+    p2Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece({type: PieceType.P2_ASSASSIN, healthPoints: 0, squareIndex: 0});
+    p2Pieces[constants.MAGE_PIECE_INDEX] = new Piece({type: PieceType.P2_MAGE, healthPoints: 0, squareIndex: 0});
+    p2Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece({type: PieceType.P2_WARRIOR, healthPoints: 0, squareIndex: 0});
 
     this.p2King = p2Pieces[constants.KING_PIECE_INDEX]
 
@@ -2305,16 +2432,16 @@ export class Game {
     ar1.forEach(item => {
       let ar2 = item.split("-")
       if(ar2[0] === "empty") {
-        this.board[boardIdx] = new Piece(PieceType.NO_PIECE, 0, boardIdx)
+        this.board[boardIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: boardIdx})
       } else {
         let healthPoints = Number(ar2[2])
         let pieceType: string = ar2[0] + ar2[1]
         if(pieceType == "0king") {
-          this.board[boardIdx] = new Piece(PieceType.P1_KING, healthPoints, boardIdx);
+          this.board[boardIdx] = new Piece({type: PieceType.P1_KING, healthPoints: healthPoints, squareIndex: boardIdx});
           p1Pieces[constants.KING_PIECE_INDEX] = this.board[boardIdx];
           this.p1King = this.board[boardIdx];
         } else if(pieceType == "0pawn") {
-          this.board[boardIdx] = new Piece(PieceType.P1_PAWN, healthPoints, boardIdx);
+          this.board[boardIdx] = new Piece({type: PieceType.P1_PAWN, healthPoints: healthPoints, squareIndex: boardIdx});
           if(p1Pieces[constants.PAWN_1_PIECE_INDEX].healthPoints <= 0) {
             p1Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[boardIdx];
           } else if(p1Pieces[constants.PAWN_2_PIECE_INDEX].healthPoints <= 0) {
@@ -2325,20 +2452,20 @@ export class Game {
             throw "Already found 3 living PLAYER_1 Pawns";
           }
         } else if(pieceType == "0mage") {
-          this.board[boardIdx] = new Piece(PieceType.P1_MAGE, healthPoints, boardIdx);
+          this.board[boardIdx] = new Piece({type: PieceType.P1_MAGE, healthPoints: healthPoints, squareIndex: boardIdx});
           p1Pieces[constants.MAGE_PIECE_INDEX] = this.board[boardIdx];
         } else if(pieceType == "0assassin") {
-          this.board[boardIdx] = new Piece(PieceType.P1_ASSASSIN, healthPoints, boardIdx);
+          this.board[boardIdx] = new Piece({type: PieceType.P1_ASSASSIN, healthPoints: healthPoints, squareIndex: boardIdx});
           p1Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[boardIdx];
         } else if(pieceType == "0warrior") {
-          this.board[boardIdx] = new Piece(PieceType.P1_WARRIOR, healthPoints, boardIdx);
+          this.board[boardIdx] = new Piece({type: PieceType.P1_WARRIOR, healthPoints: healthPoints, squareIndex: boardIdx});
           p1Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[boardIdx];
         } else if(pieceType == "1king") {
-          this.board[boardIdx] = new Piece(PieceType.P2_KING, healthPoints, boardIdx);
+          this.board[boardIdx] = new Piece({type: PieceType.P2_KING, healthPoints: healthPoints, squareIndex: boardIdx});
           p2Pieces[constants.KING_PIECE_INDEX] = this.board[boardIdx];
           this.p2King = this.board[boardIdx];
         } else if(pieceType == "1pawn") {
-          this.board[boardIdx] = new Piece(PieceType.P2_PAWN, healthPoints, boardIdx);
+          this.board[boardIdx] = new Piece({type: PieceType.P2_PAWN, healthPoints: healthPoints, squareIndex: boardIdx});
           if(p2Pieces[constants.PAWN_1_PIECE_INDEX].healthPoints <= 0) {
             p2Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[boardIdx];
           } else if(p2Pieces[constants.PAWN_2_PIECE_INDEX].healthPoints <= 0) {
@@ -2349,13 +2476,13 @@ export class Game {
             throw "Already found 3 living PLAYER_2 Pawns";
           }
         } else if(pieceType == "1mage") {
-          this.board[boardIdx] = new Piece(PieceType.P2_MAGE, healthPoints, boardIdx);
+          this.board[boardIdx] = new Piece({type: PieceType.P2_MAGE, healthPoints: healthPoints, squareIndex: boardIdx});
           p2Pieces[constants.MAGE_PIECE_INDEX] = this.board[boardIdx];
         } else if(pieceType == "1assassin") {
-          this.board[boardIdx] = new Piece(PieceType.P2_ASSASSIN, healthPoints, boardIdx);
+          this.board[boardIdx] = new Piece({type: PieceType.P2_ASSASSIN, healthPoints: healthPoints, squareIndex: boardIdx});
           p2Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[boardIdx];
         } else if(pieceType == "1warrior") {
-          this.board[boardIdx] = new Piece(PieceType.P2_WARRIOR, healthPoints, boardIdx);
+          this.board[boardIdx] = new Piece({type: PieceType.P2_WARRIOR, healthPoints: healthPoints, squareIndex: boardIdx});
           p2Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[boardIdx];
         }
       }
