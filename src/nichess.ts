@@ -320,6 +320,8 @@ export class Game {
     this.board[coordinatesToBoardIndex(7,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,4)});
     this.board[coordinatesToBoardIndex(7,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,5)});
 
+    this.playerToPieces = [];
+
     // Pieces are also kept in an array for faster access
     let p1Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
     p1Pieces[constants.KING_PIECE_INDEX] = this.board[coordinatesToBoardIndex(0,0)];
