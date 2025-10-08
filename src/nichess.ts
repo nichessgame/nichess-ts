@@ -1,14 +1,24 @@
 import * as constants from './constants'
-import { 
+import { Direction } from './constants'
+import {
   pieceTypeToString, 
-  generateLegalMovesOnAnEmptyBoard,
-  generateLegalAbilitiesOnAnEmptyBoard,
+  generateSquareToDirectionToLine,
+  generateSrcSquareToDstSquareToDirection,
   generateSquareToNeighboringSquares,
+  generateSquareToNeighboringNonDiagonalSquares,
+  generateSquareToKnightActionSquares,
+  generateSquareToP1PawnMoveSquares,
+  generateSquareToP2PawnMoveSquares,
+  generateSquareToP1PawnAbilitySquares,
+  generateSquareToP2PawnAbilitySquares,
   player1OrEmpty,
   player2OrEmpty,
   pieceBelongsToPlayer,
   isSquareIndexOffBoard,
   } from './util'
+import { GameCache } from './game_cache'
+import { Zobrist } from './zobrist'
+
 
 export enum Player {
   PLAYER_1 = 0,
@@ -16,13 +26,16 @@ export enum Player {
 }
 
 export enum PieceType {
-  P1_KING = 0, P1_MAGE, P1_WARRIOR, P1_ASSASSIN, P1_PAWN,
-  P2_KING, P2_MAGE, P2_WARRIOR, P2_ASSASSIN, P2_PAWN,
+  P1_KING = 0, P1_MAGE, P1_WARRIOR, P1_ASSASSIN, P1_KNIGHT, P1_PAWN,
+  P2_KING, P2_MAGE, P2_WARRIOR, P2_ASSASSIN, P2_KNIGHT, P2_PAWN,
   NO_PIECE
 }
 
-export enum AbilityType {
-  KING_DAMAGE = 0, MAGE_DAMAGE, WARRIOR_DAMAGE, ASSASSIN_DAMAGE, PAWN_DAMAGE, NO_ABILITY
+export enum ActionType {
+  MOVE_REGULAR = 0, MOVE_CASTLE, MOVE_PROMOTE_P1_PAWN, MOVE_PROMOTE_P2_PAWN, ABILITY_KING_DAMAGE, ABILITY_MAGE_DAMAGE,
+  ABILITY_P1_PAWN_DAMAGE_AND_PROMOTION, ABILITY_P2_PAWN_DAMAGE_AND_PROMOTION,
+  ABILITY_MAGE_THROW_ASSASSIN, ABILITY_WARRIOR_DAMAGE, ABILITY_ASSASSIN_DAMAGE, 
+  ABILITY_KNIGHT_DAMAGE, ABILITY_PAWN_DAMAGE, ABILITY_WARRIOR_THROW_WARRIOR, SKIP
 }
 
 export class Piece {
@@ -42,210 +55,131 @@ export class Piece {
   }
 }
 
-export class PlayerMove {
-  public moveSrcIdx: number
-  public moveDstIdx: number
-  constructor(moveSrcIdx: number, moveDstIdx: number) {
-    this.moveSrcIdx = moveSrcIdx
-    this.moveDstIdx = moveDstIdx
-  }
-}
-
-export class PlayerAbility {
-  public abilitySrcIdx: number
-  public abilityDstIdx: number
-  constructor(abilitySrcIdx: number, abilityDstIdx: number) {
-    this.abilitySrcIdx = abilitySrcIdx
-    this.abilityDstIdx = abilityDstIdx
-  }
-}
-
 export class PlayerAction {
-  public moveSrcIdx: number
-  public moveDstIdx: number
-  public abilitySrcIdx: number
-  public abilityDstIdx: number
-  constructor(moveSrcIdx: number, moveDstIdx: number, abilitySrcIdx: number, abilityDstIdx: number) {
-    this.moveSrcIdx = moveSrcIdx
-    this.moveDstIdx = moveDstIdx
-    this.abilitySrcIdx = abilitySrcIdx
-    this.abilityDstIdx = abilityDstIdx
+  public srcIdx: number
+  public dstIdx: number
+  public actionType: ActionType
+  constructor(srcIdx: number, dstIdx: number, actionType: ActionType) {
+    this.srcIdx = srcIdx;
+    this.dstIdx = dstIdx;
+    this.actionType = actionType;
   }
 }
 
 export class UndoInfo {
   public affectedPieces: Array<Piece>
-  public moveSrcIdx: number
-  public moveDstIdx: number
-  public abilityType: AbilityType
+  public action: PlayerAction
+  // Some actions require saving extra values, like previous position of an affected piece or its
+  // health points. t1 and t2 are used for that.
+  public t1: number
+  public t2: number
+
   constructor() {
     this.affectedPieces = new Array<Piece>() 
   }
 }
 
-export class GameCache {
-  public pieceTypeToSquareIndexToLegalMoves: Array<Array<Array<PlayerMove>>>
-  public pieceTypeToSquareIndexToLegalAbilities: Array<Array<Array<PlayerAbility>>>
-  public squareToNeighboringSquares: Array<Array<number>>
-  constructor() {
-    this.pieceTypeToSquareIndexToLegalMoves = generateLegalMovesOnAnEmptyBoard()
-    this.pieceTypeToSquareIndexToLegalAbilities = generateLegalAbilitiesOnAnEmptyBoard()
-    this.squareToNeighboringSquares = generateSquareToNeighboringSquares()
-  }
-}
-
 export class Game {
   public board: Array<Piece> = new Array()
-  public p1King: Piece
-  public p2King: Piece
   public playerToPieces: Array<Piece[]> = new Array()
+  public playerToKing: Array<Piece> = new Array(constants.NUM_PLAYERS)
   public currentPlayer: Player
   public moveNumber: number
-  public gameCache: GameCache
+  public repetitions: Map<number, number>
+  public repetitionsDraw: boolean
 
   // 3 possible constructors:
-  // 1) constructor(gameCache)
-  // 2) constructor(gameCache, encodedBoard)
+  // 1) constructor()
+  // 2) constructor(encodedBoard)
   // 3) constructor(other)
-  constructor(params: {gameCache?: GameCache, encodedBoard?: string, other?: Game}) {
+  constructor(params: {encodedBoard?: string, other?: Game}) {
     if(params.encodedBoard !== undefined) { // 2)
-      this.gameCache = params.gameCache
       this.boardFromString(params.encodedBoard)
+      this.repetitions = new Map(); // history not encoded
+      let zh = this.zobristHash();
+      this.repetitions.set(zh, 1);
+      this.repetitionsDraw = false; // history not encoded
     } else if(params.other !== undefined) { // 3)
       this.moveNumber = params.other.moveNumber;
       this.currentPlayer = params.other.currentPlayer;
-      this.gameCache = params.other.gameCache;
       for(let i = 0; i < constants.NUM_SQUARES; i++) {
         this.board[i] = new Piece({other: params.other.board[i]});
       }
 
       let otherP1Pieces: Array<Piece> = params.other.playerToPieces[Player.PLAYER_1];
-      let otherP2Pieces: Array<Piece> = params.other.playerToPieces[Player.PLAYER_2];
-      let p1Pieces: Array<Piece> = new Array<Piece>(constants.NUM_STARTING_PIECES);
-
-      let otherP1King: Piece = otherP1Pieces[constants.KING_PIECE_INDEX];
-      if(otherP1King.healthPoints > 0) {
-        p1Pieces[constants.KING_PIECE_INDEX] = this.board[otherP1King.squareIndex];
-      } else {
-        p1Pieces[constants.KING_PIECE_INDEX] = new Piece({type: PieceType.P1_KING, healthPoints: otherP1King.healthPoints, squareIndex: otherP1King.squareIndex});
+      let p1Pieces: Array<Piece> = new Array<Piece>();
+      for(let i = 0; i < otherP1Pieces.length; i++) {
+        let currentPiece: Piece = otherP1Pieces[i];
+        if(currentPiece.healthPoints > 0) {
+          p1Pieces.push(this.board[currentPiece.squareIndex])
+        } else {
+          // TODO: is this even needed?
+          p1Pieces.push(new Piece({type: currentPiece.type, healthPoints: currentPiece.healthPoints, squareIndex: currentPiece.squareIndex}))
+        }
       }
-      this.p1King = p1Pieces[constants.KING_PIECE_INDEX];
-
-      let otherP1Pawn1: Piece = otherP1Pieces[constants.PAWN_1_PIECE_INDEX];
-      if(otherP1Pawn1.healthPoints > 0) {
-        p1Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[otherP1Pawn1.squareIndex];
-      } else {
-        p1Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: otherP1Pawn1.healthPoints, squareIndex: otherP1Pawn1.squareIndex});
-      }
-
-      let otherP1Pawn2: Piece = otherP1Pieces[constants.PAWN_2_PIECE_INDEX];
-      if(otherP1Pawn2.healthPoints > 0) {
-        p1Pieces[constants.PAWN_2_PIECE_INDEX] = this.board[otherP1Pawn2.squareIndex];
-      } else {
-        p1Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: otherP1Pawn2.healthPoints, squareIndex: otherP1Pawn2.squareIndex});
-      }
-
-      let otherP1Assassin = otherP1Pieces[constants.ASSASSIN_PIECE_INDEX];
-      if(otherP1Assassin.healthPoints > 0) {
-        p1Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[otherP1Assassin.squareIndex];
-      } else {
-        p1Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece({type: PieceType.P1_ASSASSIN, healthPoints: otherP1Assassin.healthPoints, squareIndex: otherP1Assassin.squareIndex});
-      }
-
-      let otherP1Warrior = otherP1Pieces[constants.WARRIOR_PIECE_INDEX];
-      if(otherP1Warrior.healthPoints > 0) {
-        p1Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[otherP1Warrior.squareIndex];
-      } else {
-        p1Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece({type: PieceType.P1_WARRIOR, healthPoints: otherP1Warrior.healthPoints, squareIndex: otherP1Warrior.squareIndex});
-      }
-
-      let otherP1Mage = otherP1Pieces[constants.MAGE_PIECE_INDEX];
-      if(otherP1Mage.healthPoints > 0) {
-        p1Pieces[constants.MAGE_PIECE_INDEX] = this.board[otherP1Mage.squareIndex];
-      } else {
-        p1Pieces[constants.MAGE_PIECE_INDEX] = new Piece({type: PieceType.P1_MAGE, healthPoints: otherP1Mage.healthPoints, squareIndex: otherP1Mage.squareIndex});
-      }
-
-      let otherP1Pawn3 = otherP1Pieces[constants.PAWN_3_PIECE_INDEX];
-      if(otherP1Pawn3.healthPoints > 0) {
-        p1Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[otherP1Pawn3.squareIndex];
-      } else {
-        p1Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: otherP1Pawn3.healthPoints, squareIndex: otherP1Pawn3.squareIndex});
-      }
-
+      let otherP1King: Piece = params.other.playerToKing[Player.PLAYER_1];
+      this.playerToKing[Player.PLAYER_1] = this.board[otherP1King.squareIndex];
       this.playerToPieces[Player.PLAYER_1] = p1Pieces;
 
-      let p2Pieces: Array<Piece> = new Array<Piece>(constants.NUM_STARTING_PIECES);
-      let otherP2King = otherP2Pieces[constants.KING_PIECE_INDEX];
-      if(otherP2King.healthPoints > 0) {
-        p2Pieces[constants.KING_PIECE_INDEX] = this.board[otherP2King.squareIndex];
-      } else {
-        p2Pieces[constants.KING_PIECE_INDEX] = new Piece({type: PieceType.P2_KING, healthPoints: otherP2King.healthPoints, squareIndex: otherP2King.squareIndex});
+      let otherP2Pieces: Array<Piece> = params.other.playerToPieces[Player.PLAYER_2];
+      let p2Pieces: Array<Piece> = new Array<Piece>();
+      for(let i = 0; i < otherP2Pieces.length; i++) {
+        let currentPiece: Piece = otherP2Pieces[i];
+        if(currentPiece.healthPoints > 0) {
+          p2Pieces.push(this.board[currentPiece.squareIndex])
+        } else {
+          // TODO: is this even needed?
+          p2Pieces.push(new Piece({type: currentPiece.type, healthPoints: currentPiece.healthPoints, squareIndex: currentPiece.squareIndex}))
+        }
       }
-      this.p2King = p2Pieces[constants.KING_PIECE_INDEX];
-
-      let otherP2Pawn1: Piece = otherP2Pieces[constants.PAWN_1_PIECE_INDEX];
-      if(otherP2Pawn1.healthPoints > 0) {
-        p2Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[otherP2Pawn1.squareIndex];
-      } else {
-        p2Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: otherP2Pawn1.healthPoints, squareIndex: otherP2Pawn1.squareIndex});
-      }
-
-      let otherP2Pawn2: Piece = otherP2Pieces[constants.PAWN_2_PIECE_INDEX];
-      if(otherP2Pawn2.healthPoints > 0) {
-        p2Pieces[constants.PAWN_2_PIECE_INDEX] = this.board[otherP2Pawn2.squareIndex];
-      } else {
-        p2Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: otherP2Pawn2.healthPoints, squareIndex: otherP2Pawn2.squareIndex});
-      }
-
-      let otherP2Assassin: Piece = otherP2Pieces[constants.ASSASSIN_PIECE_INDEX];
-      if(otherP2Assassin.healthPoints > 0) {
-        p2Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[otherP2Assassin.squareIndex];
-      } else {
-        p2Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece({type: PieceType.P2_ASSASSIN, healthPoints: otherP2Assassin.healthPoints, squareIndex: otherP2Assassin.squareIndex});
-      }
-
-      let otherP2Warrior: Piece = otherP2Pieces[constants.WARRIOR_PIECE_INDEX];
-      if(otherP2Warrior.healthPoints > 0) {
-        p2Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[otherP2Warrior.squareIndex];
-      } else {
-        p2Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece({type: PieceType.P2_WARRIOR, healthPoints: otherP2Warrior.healthPoints, squareIndex: otherP2Warrior.squareIndex});
-      }
-
-      let otherP2Mage: Piece = otherP2Pieces[constants.MAGE_PIECE_INDEX];
-      if(otherP2Mage.healthPoints > 0) {
-        p2Pieces[constants.MAGE_PIECE_INDEX] = this.board[otherP2Mage.squareIndex];
-      } else {
-        p2Pieces[constants.MAGE_PIECE_INDEX] = new Piece({type: PieceType.P2_MAGE, healthPoints: otherP2Mage.healthPoints, squareIndex: otherP2Mage.squareIndex});
-      }
-
-      let otherP2Pawn3: Piece = otherP2Pieces[constants.PAWN_3_PIECE_INDEX];
-      if(otherP2Pawn3.healthPoints > 0) {
-        p2Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[otherP2Pawn3.squareIndex];
-      } else {
-        p2Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: otherP2Pawn3.healthPoints, squareIndex: otherP2Pawn3.squareIndex});
-      }
-
+      let otherP2King: Piece = params.other.playerToKing[Player.PLAYER_2];
+      this.playerToKing[Player.PLAYER_2] = this.board[otherP2King.squareIndex];
       this.playerToPieces[Player.PLAYER_2] = p2Pieces;
+      this.repetitions = new Map(params.other.repetitions);
+      this.repetitionsDraw = params.other.repetitionsDraw; // should always be false
     } else { // 1)
-      this.gameCache = params.gameCache
       this.reset()
     }
-  }
-
-  makeMove(moveSrcIdx: number, moveDstIdx: number): void {
-    this.board[moveDstIdx] = this.board[moveSrcIdx]
-    this.board[moveDstIdx].squareIndex = moveDstIdx
-    this.board[moveSrcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: moveSrcIdx})
   }
 
   /*
   * Since move is being reverted, goal here is to move from "destination" to "source".
   */
-  undoMove(moveSrcIdx: number, moveDstIdx: number): void {
-    this.board[moveSrcIdx] = this.board[moveDstIdx]
-    this.board[moveSrcIdx].squareIndex = moveSrcIdx
-    this.board[moveDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: moveDstIdx})
+  undoMove(action: PlayerAction): void {
+    if(action.actionType == ActionType.MOVE_REGULAR) {
+      this.board[action.srcIdx] = this.board[action.dstIdx]
+      this.board[action.srcIdx].squareIndex = action.srcIdx
+      this.board[action.dstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: action.dstIdx})
+    } else if(action.actionType == ActionType.SKIP) {
+      return
+    } else { // castle
+      // move king back
+      this.board[action.srcIdx] = this.board[action.dstIdx]
+      this.board[action.srcIdx].squareIndex = action.srcIdx
+      this.board[action.dstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: action.dstIdx})
+      // move warrior back
+      if(action.dstIdx == 6) {
+        // p1 short castle
+        this.board[7] = this.board[5]
+        this.board[7].squareIndex = 7
+        this.board[5] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: 5})
+      } else if(action.dstIdx == 2) {
+        // p1 long castle
+        this.board[0] = this.board[3]
+        this.board[0].squareIndex = 0
+        this.board[3] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: 3})
+       } else if(action.dstIdx == 62) {
+        // p2 short castle
+        this.board[63] = this.board[61]
+        this.board[63].squareIndex = 63
+        this.board[61] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: 61})
+       } else if(action.dstIdx == 58) {
+        // p2 long castle
+        this.board[56] = this.board[59]
+        this.board[56].squareIndex = 56
+        this.board[59] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: 59})
+      }
+    }
   }
 
   reset(): void {
@@ -253,1638 +187,1487 @@ export class Game {
     this.currentPlayer = Player.PLAYER_1
     this.board = new Array<Piece>(constants.NUM_SQUARES)
     // Create starting position
-    this.board[coordinatesToBoardIndex(0,0)] = new Piece({type: PieceType.P1_KING, healthPoints: constants.KING_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(0,0)});
+    this.board[coordinatesToBoardIndex(0,0)] = new Piece({type: PieceType.P1_WARRIOR, healthPoints: constants.WARRIOR_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(0,0)});
+    this.board[coordinatesToBoardIndex(1,0)] = new Piece({type: PieceType.P1_KNIGHT, healthPoints: constants.KNIGHT_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(1,0)});
+    this.board[coordinatesToBoardIndex(2,0)] = new Piece({type: PieceType.P1_ASSASSIN, healthPoints: constants.ASSASSIN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(2,0)});
+    this.board[coordinatesToBoardIndex(3,0)] = new Piece({type: PieceType.P1_MAGE, healthPoints: constants.MAGE_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(3,0)});
+    this.board[coordinatesToBoardIndex(4,0)] = new Piece({type: PieceType.P1_KING, healthPoints: constants.KING_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(4,0)});
+    this.board[coordinatesToBoardIndex(5,0)] = new Piece({type: PieceType.P1_ASSASSIN, healthPoints: constants.ASSASSIN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(5,0)});
+    this.board[coordinatesToBoardIndex(6,0)] = new Piece({type: PieceType.P1_KNIGHT, healthPoints: constants.KNIGHT_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(6,0)});
+    this.board[coordinatesToBoardIndex(7,0)] = new Piece({type: PieceType.P1_WARRIOR, healthPoints: constants.WARRIOR_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(7,0)});
+
     this.board[coordinatesToBoardIndex(0,1)] = new Piece({type: PieceType.P1_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(0,1)});
     this.board[coordinatesToBoardIndex(1,1)] = new Piece({type: PieceType.P1_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(1,1)});
-    this.board[coordinatesToBoardIndex(7,0)] = new Piece({type: PieceType.P1_ASSASSIN, healthPoints: constants.ASSASSIN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(7,0)});
-    this.board[coordinatesToBoardIndex(3,1)] = new Piece({type: PieceType.P1_WARRIOR, healthPoints: constants.WARRIOR_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(3,1)});
-    this.board[coordinatesToBoardIndex(4,1)] = new Piece({type: PieceType.P1_MAGE, healthPoints: constants.MAGE_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(4,1)});
+    this.board[coordinatesToBoardIndex(2,1)] = new Piece({type: PieceType.P1_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(2,1)});
+    this.board[coordinatesToBoardIndex(3,1)] = new Piece({type: PieceType.P1_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(3,1)});
+    this.board[coordinatesToBoardIndex(4,1)] = new Piece({type: PieceType.P1_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(4,1)});
     this.board[coordinatesToBoardIndex(5,1)] = new Piece({type: PieceType.P1_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(5,1)});
+    this.board[coordinatesToBoardIndex(6,1)] = new Piece({type: PieceType.P1_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(6,1)});
+    this.board[coordinatesToBoardIndex(7,1)] = new Piece({type: PieceType.P1_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(7,1)});
 
-    this.board[coordinatesToBoardIndex(7,7)] = new Piece({type: PieceType.P2_KING, healthPoints: constants.KING_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(7,7)});
-    this.board[coordinatesToBoardIndex(7,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(7,6)});
-    this.board[coordinatesToBoardIndex(6,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(6,6)});
-    this.board[coordinatesToBoardIndex(0,7)] = new Piece({type: PieceType.P2_ASSASSIN, healthPoints: constants.ASSASSIN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(0,7)});
-    this.board[coordinatesToBoardIndex(4,6)] = new Piece({type: PieceType.P2_WARRIOR, healthPoints: constants.WARRIOR_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(4,6)});
-    this.board[coordinatesToBoardIndex(3,6)] = new Piece({type: PieceType.P2_MAGE, healthPoints: constants.MAGE_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(3,6)});
+    this.board[coordinatesToBoardIndex(0,7)] = new Piece({type: PieceType.P2_WARRIOR, healthPoints: constants.WARRIOR_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(0,7)});
+    this.board[coordinatesToBoardIndex(1,7)] = new Piece({type: PieceType.P2_KNIGHT, healthPoints: constants.KNIGHT_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(1,7)});
+    this.board[coordinatesToBoardIndex(2,7)] = new Piece({type: PieceType.P2_ASSASSIN, healthPoints: constants.ASSASSIN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(2,7)});
+    this.board[coordinatesToBoardIndex(3,7)] = new Piece({type: PieceType.P2_MAGE, healthPoints: constants.MAGE_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(3,7)});
+    this.board[coordinatesToBoardIndex(4,7)] = new Piece({type: PieceType.P2_KING, healthPoints: constants.KING_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(4,7)});
+    this.board[coordinatesToBoardIndex(5,7)] = new Piece({type: PieceType.P2_ASSASSIN, healthPoints: constants.ASSASSIN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(5,7)});
+    this.board[coordinatesToBoardIndex(6,7)] = new Piece({type: PieceType.P2_KNIGHT, healthPoints: constants.KNIGHT_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(6,7)});
+    this.board[coordinatesToBoardIndex(7,7)] = new Piece({type: PieceType.P2_WARRIOR, healthPoints: constants.WARRIOR_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(7,7)});
+
+    this.board[coordinatesToBoardIndex(0,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(0,6)});
+    this.board[coordinatesToBoardIndex(1,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(1,6)});
     this.board[coordinatesToBoardIndex(2,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(2,6)});
+    this.board[coordinatesToBoardIndex(3,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(3,6)});
+    this.board[coordinatesToBoardIndex(4,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(4,6)});
+    this.board[coordinatesToBoardIndex(5,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(5,6)});
+    this.board[coordinatesToBoardIndex(6,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(6,6)});
+    this.board[coordinatesToBoardIndex(7,6)] = new Piece({type: PieceType.P2_PAWN, healthPoints: constants.PAWN_STARTING_HEALTH_POINTS, squareIndex: coordinatesToBoardIndex(7,6)});
 
     this.board[coordinatesToBoardIndex(0,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(0,2)});
     this.board[coordinatesToBoardIndex(0,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(0,3)});
     this.board[coordinatesToBoardIndex(0,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(0,4)});
     this.board[coordinatesToBoardIndex(0,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(0,5)});
-    this.board[coordinatesToBoardIndex(0,6)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(0,6)});
-    this.board[coordinatesToBoardIndex(1,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,0)});
     this.board[coordinatesToBoardIndex(1,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,2)});
     this.board[coordinatesToBoardIndex(1,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,3)});
     this.board[coordinatesToBoardIndex(1,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,4)});
     this.board[coordinatesToBoardIndex(1,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,5)});
-    this.board[coordinatesToBoardIndex(1,6)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,6)});
-    this.board[coordinatesToBoardIndex(1,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(1,7)});
-    this.board[coordinatesToBoardIndex(2,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,0)});
-    this.board[coordinatesToBoardIndex(2,1)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,1)});
     this.board[coordinatesToBoardIndex(2,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,2)});
     this.board[coordinatesToBoardIndex(2,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,3)});
     this.board[coordinatesToBoardIndex(2,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,4)});
     this.board[coordinatesToBoardIndex(2,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,5)});
-    this.board[coordinatesToBoardIndex(2,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(2,7)});
-    this.board[coordinatesToBoardIndex(3,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,0)});
     this.board[coordinatesToBoardIndex(3,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,2)});
     this.board[coordinatesToBoardIndex(3,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,3)});
     this.board[coordinatesToBoardIndex(3,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,4)});
     this.board[coordinatesToBoardIndex(3,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,5)});
-    this.board[coordinatesToBoardIndex(3,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(3,7)});
-    this.board[coordinatesToBoardIndex(4,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,0)});
     this.board[coordinatesToBoardIndex(4,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,2)});
     this.board[coordinatesToBoardIndex(4,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,3)});
     this.board[coordinatesToBoardIndex(4,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,4)});
     this.board[coordinatesToBoardIndex(4,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,5)});
-    this.board[coordinatesToBoardIndex(4,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(4,7)});
-    this.board[coordinatesToBoardIndex(5,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,0)});
     this.board[coordinatesToBoardIndex(5,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,2)});
     this.board[coordinatesToBoardIndex(5,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,3)});
     this.board[coordinatesToBoardIndex(5,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,4)});
     this.board[coordinatesToBoardIndex(5,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,5)});
-    this.board[coordinatesToBoardIndex(5,6)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,6)});
-    this.board[coordinatesToBoardIndex(5,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(5,7)});
-    this.board[coordinatesToBoardIndex(6,0)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,0)});
-    this.board[coordinatesToBoardIndex(6,1)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,1)});
     this.board[coordinatesToBoardIndex(6,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,2)});
     this.board[coordinatesToBoardIndex(6,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,3)});
     this.board[coordinatesToBoardIndex(6,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,4)});
     this.board[coordinatesToBoardIndex(6,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,5)});
-    this.board[coordinatesToBoardIndex(6,7)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(6,7)});
-    this.board[coordinatesToBoardIndex(7,1)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,1)});
     this.board[coordinatesToBoardIndex(7,2)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,2)});
     this.board[coordinatesToBoardIndex(7,3)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,3)});
     this.board[coordinatesToBoardIndex(7,4)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,4)});
     this.board[coordinatesToBoardIndex(7,5)] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: coordinatesToBoardIndex(7,5)});
 
-    this.playerToPieces = [];
-
-    // Pieces are also kept in an array for faster access
     let p1Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
-    p1Pieces[constants.KING_PIECE_INDEX] = this.board[coordinatesToBoardIndex(0,0)];
-    p1Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[coordinatesToBoardIndex(0,1)];
-    p1Pieces[constants.PAWN_2_PIECE_INDEX] = this.board[coordinatesToBoardIndex(1,1)];
-    p1Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[coordinatesToBoardIndex(7,0)];
-    p1Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[coordinatesToBoardIndex(3,1)];
-    p1Pieces[constants.MAGE_PIECE_INDEX] = this.board[coordinatesToBoardIndex(4,1)];
-    p1Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[coordinatesToBoardIndex(5,1)];
-    this.playerToPieces.push(p1Pieces);
 
-    this.p1King = p1Pieces[constants.KING_PIECE_INDEX];
+    p1Pieces[0] = this.board[coordinatesToBoardIndex(0,0)];
+    p1Pieces[1] = this.board[coordinatesToBoardIndex(1,0)];
+    p1Pieces[2] = this.board[coordinatesToBoardIndex(2,0)];
+    p1Pieces[3] = this.board[coordinatesToBoardIndex(3,0)];
+    p1Pieces[4] = this.board[coordinatesToBoardIndex(4,0)];
+    p1Pieces[5] = this.board[coordinatesToBoardIndex(5,0)];
+    p1Pieces[6] = this.board[coordinatesToBoardIndex(6,0)];
+    p1Pieces[7] = this.board[coordinatesToBoardIndex(7,0)];
+
+    p1Pieces[8] = this.board[coordinatesToBoardIndex(0,1)];
+    p1Pieces[9] = this.board[coordinatesToBoardIndex(1,1)];
+    p1Pieces[10] = this.board[coordinatesToBoardIndex(2,1)];
+    p1Pieces[11] = this.board[coordinatesToBoardIndex(3,1)];
+    p1Pieces[12] = this.board[coordinatesToBoardIndex(4,1)];
+    p1Pieces[13] = this.board[coordinatesToBoardIndex(5,1)];
+    p1Pieces[14] = this.board[coordinatesToBoardIndex(6,1)];
+    p1Pieces[15] = this.board[coordinatesToBoardIndex(7,1)];
+
+    this.playerToPieces = []
+    this.playerToPieces.push(p1Pieces);
+    this.playerToKing[Player.PLAYER_1] = p1Pieces[4];
 
     let p2Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
-    p2Pieces[constants.KING_PIECE_INDEX] = this.board[coordinatesToBoardIndex(7,7)];
-    p2Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[coordinatesToBoardIndex(7,6)];
-    p2Pieces[constants.PAWN_2_PIECE_INDEX] = this.board[coordinatesToBoardIndex(6,6)];
-    p2Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[coordinatesToBoardIndex(0,7)];
-    p2Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[coordinatesToBoardIndex(4,6)];
-    p2Pieces[constants.MAGE_PIECE_INDEX] = this.board[coordinatesToBoardIndex(3,6)];
-    p2Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[coordinatesToBoardIndex(2,6)];
+
+    p2Pieces[0] = this.board[coordinatesToBoardIndex(0,7)];
+    p2Pieces[1] = this.board[coordinatesToBoardIndex(1,7)];
+    p2Pieces[2] = this.board[coordinatesToBoardIndex(2,7)];
+    p2Pieces[3] = this.board[coordinatesToBoardIndex(3,7)];
+    p2Pieces[4] = this.board[coordinatesToBoardIndex(4,7)];
+    p2Pieces[5] = this.board[coordinatesToBoardIndex(5,7)];
+    p2Pieces[6] = this.board[coordinatesToBoardIndex(6,7)];
+    p2Pieces[7] = this.board[coordinatesToBoardIndex(7,7)];
+
+    p2Pieces[8] = this.board[coordinatesToBoardIndex(0,6)];
+    p2Pieces[9] = this.board[coordinatesToBoardIndex(1,6)];
+    p2Pieces[10] = this.board[coordinatesToBoardIndex(2,6)];
+    p2Pieces[11] = this.board[coordinatesToBoardIndex(3,6)];
+    p2Pieces[12] = this.board[coordinatesToBoardIndex(4,6)];
+    p2Pieces[13] = this.board[coordinatesToBoardIndex(5,6)];
+    p2Pieces[14] = this.board[coordinatesToBoardIndex(6,6)];
+    p2Pieces[15] = this.board[coordinatesToBoardIndex(7,6)];
+
     this.playerToPieces.push(p2Pieces);
+    this.playerToKing[Player.PLAYER_2] = p2Pieces[4];
 
-    this.p2King = p2Pieces[constants.KING_PIECE_INDEX];
+    this.repetitions = new Map();
+    let zh = this.zobristHash();
+    this.repetitions.set(zh, 1);
+    this.repetitionsDraw = false;
   }
 
-  usefulLegalActions(): Array<PlayerAction> {
-    let retval = new Array<PlayerAction>()
-    // If King is dead, game is over and there are no legal actions
-    if(this.playerToPieces[this.currentPlayer][constants.KING_PIECE_INDEX].healthPoints <= 0) {
-      return retval;
-    }
-    for(let i = 0; i < constants.NUM_STARTING_PIECES; i++) {
-      let currentPiece: Piece = this.playerToPieces[this.currentPlayer][i];
-      if(currentPiece.healthPoints <= 0) continue; // dead pieces don't move
+  _p1AssassinActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squareIdx: number;
 
-      let legalMoves: Array<PlayerMove> = this.gameCache.pieceTypeToSquareIndexToLegalMoves[currentPiece.type][currentPiece.squareIndex];
-      for(let j = 0; j < legalMoves.length; j++) {
-        let currentMove: PlayerMove = legalMoves[j];
-        // Is p1 pawn trying to jump over another piece?
-        if(currentPiece.type == PieceType.P1_PAWN &&
-            currentPiece.squareIndex - currentMove.moveDstIdx == -2 * constants.NUM_COLUMNS 
-            ) {
-          // checks whether square in front of the p1 pawn is empty
-          if(this.board[currentPiece.squareIndex + constants.NUM_COLUMNS].type != PieceType.NO_PIECE) continue;
-        }
-        // Is p2 pawn trying to jump over another piece?
-        if(currentPiece.type == PieceType.P2_PAWN &&
-            currentPiece.squareIndex - currentMove.moveDstIdx == 2 * constants.NUM_COLUMNS 
-            ) {
-          // checks whether square in front of the p2 pawn is empty
-          if(this.board[currentPiece.squareIndex - constants.NUM_COLUMNS].type != PieceType.NO_PIECE) continue;
-        }
-
-        if(this.board[currentMove.moveDstIdx].type != PieceType.NO_PIECE) continue;
-        this.makeMove(currentMove.moveSrcIdx, currentMove.moveDstIdx);
-        for(let k = 0; k < constants.NUM_STARTING_PIECES; k++) {
-          let cp2: Piece = this.playerToPieces[this.currentPlayer][k];
-          if(cp2.healthPoints <= 0) continue; // no abilities for dead pieces
-          let legalAbilities: Array<PlayerAbility> = this.gameCache.pieceTypeToSquareIndexToLegalAbilities[cp2.type][cp2.squareIndex];
-          for(let l = 0; l < legalAbilities.length; l++) {
-            let currentAbility: PlayerAbility = legalAbilities[l];
-            let destinationSquarePiece: Piece = this.board[currentAbility.abilityDstIdx];
-            // exclude useless abilities, e.g. warrior attacking empty square
-            switch(cp2.type) {
-              // king can only use abilities on enemy pieces
-              case PieceType.P1_KING:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    continue;
-                  case PieceType.P1_MAGE:
-                    continue;
-                  case PieceType.P1_PAWN:
-                    continue;
-                  case PieceType.P1_WARRIOR:
-                    continue;
-                  case PieceType.P1_ASSASSIN:
-                    continue;
-                  case PieceType.P2_KING:
-                    break;
-                  case PieceType.P2_MAGE:
-                    break;
-                  case PieceType.P2_PAWN:
-                    break;
-                  case PieceType.P2_WARRIOR:
-                    break;
-                  case PieceType.P2_ASSASSIN:
-                    break;
-                  case PieceType.NO_PIECE:
-                    continue;
-                  default:
-                    break;
-                }
-              // mage can only use abilities on enemy pieces
-              case PieceType.P1_MAGE:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    continue;
-                  case PieceType.P1_MAGE:
-                    continue;
-                  case PieceType.P1_PAWN:
-                    continue;
-                  case PieceType.P1_WARRIOR:
-                    continue;
-                  case PieceType.P1_ASSASSIN:
-                    continue;
-                  case PieceType.P2_KING:
-                    break;
-                  case PieceType.P2_MAGE:
-                    break;
-                  case PieceType.P2_PAWN:
-                    break;
-                  case PieceType.P2_WARRIOR:
-                    break;
-                  case PieceType.P2_ASSASSIN:
-                    break;
-                  case PieceType.NO_PIECE:
-                    continue;
-                  default:
-                    break;
-                }
-                break;
-              // pawn can only use abilities on enemy pieces
-              case PieceType.P1_PAWN:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    continue;
-                  case PieceType.P1_MAGE:
-                    continue;
-                  case PieceType.P1_PAWN:
-                    continue;
-                  case PieceType.P1_WARRIOR:
-                    continue;
-                  case PieceType.P1_ASSASSIN:
-                    continue;
-                  case PieceType.P2_KING:
-                    break;
-                  case PieceType.P2_MAGE:
-                    break;
-                  case PieceType.P2_PAWN:
-                    break;
-                  case PieceType.P2_WARRIOR:
-                    break;
-                  case PieceType.P2_ASSASSIN:
-                    break;
-                  case PieceType.NO_PIECE:
-                    continue;
-                  default:
-                    break;
-                }
-                break;
-              // warrior can only use abilities on enemy pieces
-              case PieceType.P1_WARRIOR:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    continue;
-                  case PieceType.P1_MAGE:
-                    continue;
-                  case PieceType.P1_PAWN:
-                    continue;
-                  case PieceType.P1_WARRIOR:
-                    continue;
-                  case PieceType.P1_ASSASSIN:
-                    continue;
-                  case PieceType.P2_KING:
-                    break;
-                  case PieceType.P2_MAGE:
-                    break;
-                  case PieceType.P2_PAWN:
-                    break;
-                  case PieceType.P2_WARRIOR:
-                    break;
-                  case PieceType.P2_ASSASSIN:
-                    break;
-                  case PieceType.NO_PIECE:
-                    continue;
-                  default:
-                    break;
-                }
-                break;
-              // assassin can only use abilities on enemy pieces
-              case PieceType.P1_ASSASSIN:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    continue;
-                  case PieceType.P1_MAGE:
-                    continue;
-                  case PieceType.P1_PAWN:
-                    continue;
-                  case PieceType.P1_WARRIOR:
-                    continue;
-                  case PieceType.P1_ASSASSIN:
-                    continue;
-                  case PieceType.P2_KING:
-                    break;
-                  case PieceType.P2_MAGE:
-                    break;
-                  case PieceType.P2_PAWN:
-                    break;
-                  case PieceType.P2_WARRIOR:
-                    break;
-                  case PieceType.P2_ASSASSIN:
-                    break;
-                  case PieceType.NO_PIECE:
-                    continue;
-                  default:
-                    break;
-                }
-                break;
-
-              // king can only use abilities on enemy pieces
-              case PieceType.P2_KING:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    break;
-                  case PieceType.P1_MAGE:
-                    break;
-                  case PieceType.P1_PAWN:
-                    break;
-                  case PieceType.P1_WARRIOR:
-                    break;
-                  case PieceType.P1_ASSASSIN:
-                    break;
-                  case PieceType.P2_KING:
-                    continue;
-                  case PieceType.P2_MAGE:
-                    continue;
-                  case PieceType.P2_PAWN:
-                    continue;
-                  case PieceType.P2_WARRIOR:
-                    continue;
-                  case PieceType.P2_ASSASSIN:
-                    continue;
-                  case PieceType.NO_PIECE:
-                    continue;
-                  default:
-                    break;
-                }
-              // mage can only use abilities on enemy pieces
-              case PieceType.P2_MAGE:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    break;
-                  case PieceType.P1_MAGE:
-                    break;
-                  case PieceType.P1_PAWN:
-                    break;
-                  case PieceType.P1_WARRIOR:
-                    break;
-                  case PieceType.P1_ASSASSIN:
-                    break;
-                  case PieceType.P2_KING:
-                    continue;
-                  case PieceType.P2_MAGE:
-                    continue;
-                  case PieceType.P2_PAWN:
-                    continue;
-                  case PieceType.P2_WARRIOR:
-                    continue;
-                  case PieceType.P2_ASSASSIN:
-                    continue;
-                  case PieceType.NO_PIECE:
-                    continue;
-                  default:
-                    break;
-                }
-                break;
-              // pawn can only use abilities on enemy pieces
-              case PieceType.P2_PAWN:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    break;
-                  case PieceType.P1_MAGE:
-                    break;
-                  case PieceType.P1_PAWN:
-                    break;
-                  case PieceType.P1_WARRIOR:
-                    break;
-                  case PieceType.P1_ASSASSIN:
-                    break;
-                  case PieceType.P2_KING:
-                    continue;
-                  case PieceType.P2_MAGE:
-                    continue;
-                  case PieceType.P2_PAWN:
-                    continue;
-                  case PieceType.P2_WARRIOR:
-                    continue;
-                  case PieceType.P2_ASSASSIN:
-                    continue;
-                  case PieceType.NO_PIECE:
-                    continue;
-                  default:
-                    break;
-                }
-                break;
-              // warrior can only use abilities on enemy pieces
-              case PieceType.P2_WARRIOR:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    break;
-                  case PieceType.P1_MAGE:
-                    break;
-                  case PieceType.P1_PAWN:
-                    break;
-                  case PieceType.P1_WARRIOR:
-                    break;
-                  case PieceType.P1_ASSASSIN:
-                    break;
-                  case PieceType.P2_KING:
-                    continue;
-                  case PieceType.P2_MAGE:
-                    continue;
-                  case PieceType.P2_PAWN:
-                    continue;
-                  case PieceType.P2_WARRIOR:
-                    continue;
-                  case PieceType.P2_ASSASSIN:
-                    continue;
-                  case PieceType.NO_PIECE:
-                    continue;
-                  default:
-                    break;
-                }
-                break;
-              // assassin can only use abilities on enemy pieces
-              case PieceType.P2_ASSASSIN:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    break;
-                  case PieceType.P1_MAGE:
-                    break;
-                  case PieceType.P1_PAWN:
-                    break;
-                  case PieceType.P1_WARRIOR:
-                    break;
-                  case PieceType.P1_ASSASSIN:
-                    break;
-                  case PieceType.P2_KING:
-                    continue;
-                  case PieceType.P2_MAGE:
-                    continue;
-                  case PieceType.P2_PAWN:
-                    continue;
-                  case PieceType.P2_WARRIOR:
-                    continue;
-                  case PieceType.P2_ASSASSIN:
-                    continue;
-                  case PieceType.NO_PIECE:
-                    continue;
-                  default:
-                    break;
-                }
-                break;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-            let p = new PlayerAction(currentMove.moveSrcIdx, currentMove.moveDstIdx, currentAbility.abilitySrcIdx, currentAbility.abilityDstIdx);
-            retval.push(p);
-          }
-        }
-        // player can skip the ability
-        let p = new PlayerAction(currentMove.moveSrcIdx, currentMove.moveDstIdx, constants.ABILITY_SKIP, constants.ABILITY_SKIP);
-        retval.push(p);
-
-        this.undoMove(currentMove.moveSrcIdx, currentMove.moveDstIdx);
+    let squares: Array<number> = GameCache.squareToNeighboringNonDiagonalSquares[piece.squareIndex];
+    for(let i = 0; i < squares.length; i++) {
+      squareIdx = squares[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_ASSASSIN_DAMAGE));
+        continue;
       }
     }
-    // player can skip the move
-    for(let k = 0; k < constants.NUM_STARTING_PIECES; k++) {
-      let cp2: Piece = this.playerToPieces[this.currentPlayer][k];
-      if(cp2.healthPoints <= 0) continue; // no abilities for dead pieces
-      let legalAbilities: Array<PlayerAbility> = this.gameCache.pieceTypeToSquareIndexToLegalAbilities[cp2.type][cp2.squareIndex];
-      for(let l = 0; l < legalAbilities.length; l++) {
-        let currentAbility: PlayerAbility = legalAbilities[l];
-        let destinationSquarePiece: Piece = this.board[currentAbility.abilityDstIdx];
-        // exclude useless abilities
-        switch(cp2.type) {
-          // king can only use abilities on enemy pieces
-          case PieceType.P1_KING:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                continue;
-              case PieceType.P1_MAGE:
-                continue;
-              case PieceType.P1_PAWN:
-                continue;
-              case PieceType.P1_WARRIOR:
-                continue;
-              case PieceType.P1_ASSASSIN:
-                continue;
-              case PieceType.P2_KING:
-                break;
-              case PieceType.P2_MAGE:
-                break;
-              case PieceType.P2_PAWN:
-                break;
-              case PieceType.P2_WARRIOR:
-                break;
-              case PieceType.P2_ASSASSIN:
-                break;
-              case PieceType.NO_PIECE:
-                continue;
-              default:
-                break;
-            }
-          // mage can only use abilities on enemy pieces
-          case PieceType.P1_MAGE:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                continue;
-              case PieceType.P1_MAGE:
-                continue;
-              case PieceType.P1_PAWN:
-                continue;
-              case PieceType.P1_WARRIOR:
-                continue;
-              case PieceType.P1_ASSASSIN:
-                continue;
-              case PieceType.P2_KING:
-                break;
-              case PieceType.P2_MAGE:
-                break;
-              case PieceType.P2_PAWN:
-                break;
-              case PieceType.P2_WARRIOR:
-                break;
-              case PieceType.P2_ASSASSIN:
-                break;
-              case PieceType.NO_PIECE:
-                continue;
-              default:
-                break;
-            }
-            break;
-          // pawn can only use abilities on enemy pieces
-          case PieceType.P1_PAWN:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                continue;
-              case PieceType.P1_MAGE:
-                continue;
-              case PieceType.P1_PAWN:
-                continue;
-              case PieceType.P1_WARRIOR:
-                continue;
-              case PieceType.P1_ASSASSIN:
-                continue;
-              case PieceType.P2_KING:
-                break;
-              case PieceType.P2_MAGE:
-                break;
-              case PieceType.P2_PAWN:
-                break;
-              case PieceType.P2_WARRIOR:
-                break;
-              case PieceType.P2_ASSASSIN:
-                break;
-              case PieceType.NO_PIECE:
-                continue;
-              default:
-                break;
-            }
-            break;
-          // warrior can only use abilities on enemy pieces
-          case PieceType.P1_WARRIOR:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                continue;
-              case PieceType.P1_MAGE:
-                continue;
-              case PieceType.P1_PAWN:
-                continue;
-              case PieceType.P1_WARRIOR:
-                continue;
-              case PieceType.P1_ASSASSIN:
-                continue;
-              case PieceType.P2_KING:
-                break;
-              case PieceType.P2_MAGE:
-                break;
-              case PieceType.P2_PAWN:
-                break;
-              case PieceType.P2_WARRIOR:
-                break;
-              case PieceType.P2_ASSASSIN:
-                break;
-              case PieceType.NO_PIECE:
-                continue;
-              default:
-                break;
-            }
-            break;
-          // assassin can only use abilities on enemy pieces
-          case PieceType.P1_ASSASSIN:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                continue;
-              case PieceType.P1_MAGE:
-                continue;
-              case PieceType.P1_PAWN:
-                continue;
-              case PieceType.P1_WARRIOR:
-                continue;
-              case PieceType.P1_ASSASSIN:
-                continue;
-              case PieceType.P2_KING:
-                break;
-              case PieceType.P2_MAGE:
-                break;
-              case PieceType.P2_PAWN:
-                break;
-              case PieceType.P2_WARRIOR:
-                break;
-              case PieceType.P2_ASSASSIN:
-                break;
-              case PieceType.NO_PIECE:
-                continue;
-              default:
-                break;
-            }
-            break;
 
-          // king can only use abilities on enemy pieces
-          case PieceType.P2_KING:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                break;
-              case PieceType.P1_MAGE:
-                break;
-              case PieceType.P1_PAWN:
-                break;
-              case PieceType.P1_WARRIOR:
-                break;
-              case PieceType.P1_ASSASSIN:
-                break;
-              case PieceType.P2_KING:
-                continue;
-              case PieceType.P2_MAGE:
-                continue;
-              case PieceType.P2_PAWN:
-                continue;
-              case PieceType.P2_WARRIOR:
-                continue;
-              case PieceType.P2_ASSASSIN:
-                continue;
-              case PieceType.NO_PIECE:
-                continue;
-              default:
-                break;
-            }
-          // mage can only use abilities on enemy pieces
-          case PieceType.P2_MAGE:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                break;
-              case PieceType.P1_MAGE:
-                break;
-              case PieceType.P1_PAWN:
-                break;
-              case PieceType.P1_WARRIOR:
-                break;
-              case PieceType.P1_ASSASSIN:
-                break;
-              case PieceType.P2_KING:
-                continue;
-              case PieceType.P2_MAGE:
-                continue;
-              case PieceType.P2_PAWN:
-                continue;
-              case PieceType.P2_WARRIOR:
-                continue;
-              case PieceType.P2_ASSASSIN:
-                continue;
-              case PieceType.NO_PIECE:
-                continue;
-              default:
-                break;
-            }
-            break;
-          // pawn can only use abilities on enemy pieces
-          case PieceType.P2_PAWN:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                break;
-              case PieceType.P1_MAGE:
-                break;
-              case PieceType.P1_PAWN:
-                break;
-              case PieceType.P1_WARRIOR:
-                break;
-              case PieceType.P1_ASSASSIN:
-                break;
-              case PieceType.P2_KING:
-                continue;
-              case PieceType.P2_MAGE:
-                continue;
-              case PieceType.P2_PAWN:
-                continue;
-              case PieceType.P2_WARRIOR:
-                continue;
-              case PieceType.P2_ASSASSIN:
-                continue;
-              case PieceType.NO_PIECE:
-                continue;
-              default:
-                break;
-            }
-            break;
-          // warrior can only use abilities on enemy pieces
-          case PieceType.P2_WARRIOR:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                break;
-              case PieceType.P1_MAGE:
-                break;
-              case PieceType.P1_PAWN:
-                break;
-              case PieceType.P1_WARRIOR:
-                break;
-              case PieceType.P1_ASSASSIN:
-                break;
-              case PieceType.P2_KING:
-                continue;
-              case PieceType.P2_MAGE:
-                continue;
-              case PieceType.P2_PAWN:
-                continue;
-              case PieceType.P2_WARRIOR:
-                continue;
-              case PieceType.P2_ASSASSIN:
-                continue;
-              case PieceType.NO_PIECE:
-                continue;
-              default:
-                break;
-            }
-            break;
-          // assassin can only use abilities on enemy pieces
-          case PieceType.P2_ASSASSIN:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                break;
-              case PieceType.P1_MAGE:
-                break;
-              case PieceType.P1_PAWN:
-                break;
-              case PieceType.P1_WARRIOR:
-                break;
-              case PieceType.P1_ASSASSIN:
-                break;
-              case PieceType.P2_KING:
-                continue;
-              case PieceType.P2_MAGE:
-                continue;
-              case PieceType.P2_PAWN:
-                continue;
-              case PieceType.P2_WARRIOR:
-                continue;
-              case PieceType.P2_ASSASSIN:
-                continue;
-              case PieceType.NO_PIECE:
-                continue;
-              default:
-                break;
-            }
-            break;
-          case PieceType.NO_PIECE:
-            break;
-          default:
-            break;
-        }
-
-        let p = new PlayerAction(constants.MOVE_SKIP, constants.MOVE_SKIP, currentAbility.abilitySrcIdx, currentAbility.abilityDstIdx);
-        retval.push(p);
+    let diagonal1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTHEAST];
+    for(let i = 0; i < diagonal1.length; i++) {
+      squareIdx = diagonal1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_ASSASSIN_DAMAGE));
+        break;
+      } else {
+        break;
       }
     }
-    // player can skip both move and ability
-    let p = new PlayerAction(constants.MOVE_SKIP, constants.MOVE_SKIP, constants.ABILITY_SKIP, constants.ABILITY_SKIP);
-    retval.push(p);
+
+    let diagonal2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTHEAST];
+    for(let i = 0; i < diagonal2.length; i++) {
+      squareIdx = diagonal2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_ASSASSIN_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal3: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTHWEST];
+    for(let i = 0; i < diagonal3.length; i++) {
+      squareIdx = diagonal3[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_ASSASSIN_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal4: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTHWEST];
+    for(let i = 0; i < diagonal4.length; i++) {
+      squareIdx = diagonal4[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_ASSASSIN_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
     return retval;
   }
 
-  allLegalActions(): Array<PlayerAction> {
-    let retval = new Array<PlayerAction>()
-    // If King is dead, game is over and there are no legal actions
-    if(this.playerToPieces[this.currentPlayer][constants.KING_PIECE_INDEX].healthPoints <= 0) {
-      return retval;
-    }
-    for(let i = 0; i < constants.NUM_STARTING_PIECES; i++) {
-      let currentPiece: Piece = this.playerToPieces[this.currentPlayer][i];
-      if(currentPiece.healthPoints <= 0) continue; // dead pieces don't move
+  _p2AssassinActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squareIdx: number;
 
-      let legalMoves: Array<PlayerMove> = this.gameCache.pieceTypeToSquareIndexToLegalMoves[currentPiece.type][currentPiece.squareIndex];
-      for(let j = 0; j < legalMoves.length; j++) {
-        let currentMove: PlayerMove = legalMoves[j];
-        // Is p1 pawn trying to jump over another piece?
-        if(currentPiece.type == PieceType.P1_PAWN &&
-            currentPiece.squareIndex - currentMove.moveDstIdx == -2 * constants.NUM_COLUMNS 
-            ) {
-          // checks whether square in front of the p1 pawn is empty
-          if(this.board[currentPiece.squareIndex + constants.NUM_COLUMNS].type != PieceType.NO_PIECE) continue;
-        }
-        // Is p2 pawn trying to jump over another piece?
-        if(currentPiece.type == PieceType.P2_PAWN &&
-            currentPiece.squareIndex - currentMove.moveDstIdx == 2 * constants.NUM_COLUMNS 
-            ) {
-          // checks whether square in front of the p2 pawn is empty
-          if(this.board[currentPiece.squareIndex - constants.NUM_COLUMNS].type != PieceType.NO_PIECE) continue;
-        }
-
-        if(this.board[currentMove.moveDstIdx].type != PieceType.NO_PIECE) continue;
-        this.makeMove(currentMove.moveSrcIdx, currentMove.moveDstIdx);
-        for(let k = 0; k < constants.NUM_STARTING_PIECES; k++) {
-          let cp2: Piece = this.playerToPieces[this.currentPlayer][k];
-          if(cp2.healthPoints <= 0) continue; // no abilities for dead pieces
-          let legalAbilities: Array<PlayerAbility> = this.gameCache.pieceTypeToSquareIndexToLegalAbilities[cp2.type][cp2.squareIndex];
-          for(let l = 0; l < legalAbilities.length; l++) {
-            let currentAbility: PlayerAbility = legalAbilities[l];
-            let destinationSquarePiece: Piece = this.board[currentAbility.abilityDstIdx];
-            switch(cp2.type) {
-              // king can use abilities on enemy pieces and empty squares
-              case PieceType.P1_KING:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    continue;
-                  case PieceType.P1_MAGE:
-                    continue;
-                  case PieceType.P1_PAWN:
-                    continue;
-                  case PieceType.P1_WARRIOR:
-                    continue;
-                  case PieceType.P1_ASSASSIN:
-                    continue;
-                  case PieceType.P2_KING:
-                    break;
-                  case PieceType.P2_MAGE:
-                    break;
-                  case PieceType.P2_PAWN:
-                    break;
-                  case PieceType.P2_WARRIOR:
-                    break;
-                  case PieceType.P2_ASSASSIN:
-                    break;
-                  case PieceType.NO_PIECE:
-                    break;
-                  default:
-                    break;
-                }
-              // mage can use abilities on enemy pieces and empty squares
-              case PieceType.P1_MAGE:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    continue;
-                  case PieceType.P1_MAGE:
-                    continue;
-                  case PieceType.P1_PAWN:
-                    continue;
-                  case PieceType.P1_WARRIOR:
-                    continue;
-                  case PieceType.P1_ASSASSIN:
-                    continue;
-                  case PieceType.P2_KING:
-                    break;
-                  case PieceType.P2_MAGE:
-                    break;
-                  case PieceType.P2_PAWN:
-                    break;
-                  case PieceType.P2_WARRIOR:
-                    break;
-                  case PieceType.P2_ASSASSIN:
-                    break;
-                  case PieceType.NO_PIECE:
-                    break;
-                  default:
-                    break;
-                }
-                break;
-              // pawn can use abilities on enemy pieces and empty squares
-              case PieceType.P1_PAWN:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    continue;
-                  case PieceType.P1_MAGE:
-                    continue;
-                  case PieceType.P1_PAWN:
-                    continue;
-                  case PieceType.P1_WARRIOR:
-                    continue;
-                  case PieceType.P1_ASSASSIN:
-                    continue;
-                  case PieceType.P2_KING:
-                    break;
-                  case PieceType.P2_MAGE:
-                    break;
-                  case PieceType.P2_PAWN:
-                    break;
-                  case PieceType.P2_WARRIOR:
-                    break;
-                  case PieceType.P2_ASSASSIN:
-                    break;
-                  case PieceType.NO_PIECE:
-                    break;
-                  default:
-                    break;
-                }
-                break;
-              // warrior can use abilities on enemy pieces and empty squares
-              case PieceType.P1_WARRIOR:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    continue;
-                  case PieceType.P1_MAGE:
-                    continue;
-                  case PieceType.P1_PAWN:
-                    continue;
-                  case PieceType.P1_WARRIOR:
-                    continue;
-                  case PieceType.P1_ASSASSIN:
-                    continue;
-                  case PieceType.P2_KING:
-                    break;
-                  case PieceType.P2_MAGE:
-                    break;
-                  case PieceType.P2_PAWN:
-                    break;
-                  case PieceType.P2_WARRIOR:
-                    break;
-                  case PieceType.P2_ASSASSIN:
-                    break;
-                  case PieceType.NO_PIECE:
-                    break;
-                  default:
-                    break;
-                }
-                break;
-              // assassin can use abilities on enemy pieces and empty squares
-              case PieceType.P1_ASSASSIN:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    continue;
-                  case PieceType.P1_MAGE:
-                    continue;
-                  case PieceType.P1_PAWN:
-                    continue;
-                  case PieceType.P1_WARRIOR:
-                    continue;
-                  case PieceType.P1_ASSASSIN:
-                    continue;
-                  case PieceType.P2_KING:
-                    break;
-                  case PieceType.P2_MAGE:
-                    break;
-                  case PieceType.P2_PAWN:
-                    break;
-                  case PieceType.P2_WARRIOR:
-                    break;
-                  case PieceType.P2_ASSASSIN:
-                    break;
-                  case PieceType.NO_PIECE:
-                    break;
-                  default:
-                    break;
-                }
-                break;
-
-              // king can use abilities on enemy pieces and empty squares
-              case PieceType.P2_KING:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    break;
-                  case PieceType.P1_MAGE:
-                    break;
-                  case PieceType.P1_PAWN:
-                    break;
-                  case PieceType.P1_WARRIOR:
-                    break;
-                  case PieceType.P1_ASSASSIN:
-                    break;
-                  case PieceType.P2_KING:
-                    continue;
-                  case PieceType.P2_MAGE:
-                    continue;
-                  case PieceType.P2_PAWN:
-                    continue;
-                  case PieceType.P2_WARRIOR:
-                    continue;
-                  case PieceType.P2_ASSASSIN:
-                    continue;
-                  case PieceType.NO_PIECE:
-                    break;
-                  default:
-                    break;
-                }
-              // mage can use abilities on enemy pieces and empty squares
-              case PieceType.P2_MAGE:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    break;
-                  case PieceType.P1_MAGE:
-                    break;
-                  case PieceType.P1_PAWN:
-                    break;
-                  case PieceType.P1_WARRIOR:
-                    break;
-                  case PieceType.P1_ASSASSIN:
-                    break;
-                  case PieceType.P2_KING:
-                    continue;
-                  case PieceType.P2_MAGE:
-                    continue;
-                  case PieceType.P2_PAWN:
-                    continue;
-                  case PieceType.P2_WARRIOR:
-                    continue;
-                  case PieceType.P2_ASSASSIN:
-                    continue;
-                  case PieceType.NO_PIECE:
-                    break;
-                  default:
-                    break;
-                }
-                break;
-              // pawn can use abilities on enemy pieces and empty squares
-              case PieceType.P2_PAWN:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    break;
-                  case PieceType.P1_MAGE:
-                    break;
-                  case PieceType.P1_PAWN:
-                    break;
-                  case PieceType.P1_WARRIOR:
-                    break;
-                  case PieceType.P1_ASSASSIN:
-                    break;
-                  case PieceType.P2_KING:
-                    continue;
-                  case PieceType.P2_MAGE:
-                    continue;
-                  case PieceType.P2_PAWN:
-                    continue;
-                  case PieceType.P2_WARRIOR:
-                    continue;
-                  case PieceType.P2_ASSASSIN:
-                    continue;
-                  case PieceType.NO_PIECE:
-                    break;
-                  default:
-                    break;
-                }
-                break;
-              // warrior can use abilities on enemy pieces and empty squares
-              case PieceType.P2_WARRIOR:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    break;
-                  case PieceType.P1_MAGE:
-                    break;
-                  case PieceType.P1_PAWN:
-                    break;
-                  case PieceType.P1_WARRIOR:
-                    break;
-                  case PieceType.P1_ASSASSIN:
-                    break;
-                  case PieceType.P2_KING:
-                    continue;
-                  case PieceType.P2_MAGE:
-                    continue;
-                  case PieceType.P2_PAWN:
-                    continue;
-                  case PieceType.P2_WARRIOR:
-                    continue;
-                  case PieceType.P2_ASSASSIN:
-                    continue;
-                  case PieceType.NO_PIECE:
-                    continue;
-                  default:
-                    break;
-                }
-                break;
-              // assassin can only use abilities on enemy pieces
-              case PieceType.P2_ASSASSIN:
-                switch(destinationSquarePiece.type) {
-                  case PieceType.P1_KING:
-                    break;
-                  case PieceType.P1_MAGE:
-                    break;
-                  case PieceType.P1_PAWN:
-                    break;
-                  case PieceType.P1_WARRIOR:
-                    break;
-                  case PieceType.P1_ASSASSIN:
-                    break;
-                  case PieceType.P2_KING:
-                    continue;
-                  case PieceType.P2_MAGE:
-                    continue;
-                  case PieceType.P2_PAWN:
-                    continue;
-                  case PieceType.P2_WARRIOR:
-                    continue;
-                  case PieceType.P2_ASSASSIN:
-                    continue;
-                  case PieceType.NO_PIECE:
-                    break;
-                  default:
-                    break;
-                }
-                break;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-            let p = new PlayerAction(currentMove.moveSrcIdx, currentMove.moveDstIdx, currentAbility.abilitySrcIdx, currentAbility.abilityDstIdx);
-            retval.push(p);
-          }
-        }
-        // player can skip the ability
-        let p = new PlayerAction(currentMove.moveSrcIdx, currentMove.moveDstIdx, constants.ABILITY_SKIP, constants.ABILITY_SKIP);
-        retval.push(p);
-
-        this.undoMove(currentMove.moveSrcIdx, currentMove.moveDstIdx);
+    let squares: Array<number> = GameCache.squareToNeighboringNonDiagonalSquares[piece.squareIndex];
+    for(let i = 0; i < squares.length; i++) {
+      squareIdx = squares[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_ASSASSIN_DAMAGE));
+        continue;
       }
     }
-    // player can skip the move
-    for(let k = 0; k < constants.NUM_STARTING_PIECES; k++) {
-      let cp2: Piece = this.playerToPieces[this.currentPlayer][k];
-      if(cp2.healthPoints <= 0) continue; // no abilities for dead pieces
-      let legalAbilities: Array<PlayerAbility> = this.gameCache.pieceTypeToSquareIndexToLegalAbilities[cp2.type][cp2.squareIndex];
-      for(let l = 0; l < legalAbilities.length; l++) {
-        let currentAbility: PlayerAbility = legalAbilities[l];
-        let destinationSquarePiece: Piece = this.board[currentAbility.abilityDstIdx];
-        // exclude useless abilities
-        switch(cp2.type) {
-          // king can use abilities on enemy pieces and empty squares
-          case PieceType.P1_KING:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                continue;
-              case PieceType.P1_MAGE:
-                continue;
-              case PieceType.P1_PAWN:
-                continue;
-              case PieceType.P1_WARRIOR:
-                continue;
-              case PieceType.P1_ASSASSIN:
-                continue;
-              case PieceType.P2_KING:
-                break;
-              case PieceType.P2_MAGE:
-                break;
-              case PieceType.P2_PAWN:
-                break;
-              case PieceType.P2_WARRIOR:
-                break;
-              case PieceType.P2_ASSASSIN:
-                break;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-          // mage can use abilities on enemy pieces and empty squares
-          case PieceType.P1_MAGE:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                continue;
-              case PieceType.P1_MAGE:
-                continue;
-              case PieceType.P1_PAWN:
-                continue;
-              case PieceType.P1_WARRIOR:
-                continue;
-              case PieceType.P1_ASSASSIN:
-                continue;
-              case PieceType.P2_KING:
-                break;
-              case PieceType.P2_MAGE:
-                break;
-              case PieceType.P2_PAWN:
-                break;
-              case PieceType.P2_WARRIOR:
-                break;
-              case PieceType.P2_ASSASSIN:
-                break;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-            break;
-          // pawn can use abilities on enemy pieces and empty squares
-          case PieceType.P1_PAWN:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                continue;
-              case PieceType.P1_MAGE:
-                continue;
-              case PieceType.P1_PAWN:
-                continue;
-              case PieceType.P1_WARRIOR:
-                continue;
-              case PieceType.P1_ASSASSIN:
-                continue;
-              case PieceType.P2_KING:
-                break;
-              case PieceType.P2_MAGE:
-                break;
-              case PieceType.P2_PAWN:
-                break;
-              case PieceType.P2_WARRIOR:
-                break;
-              case PieceType.P2_ASSASSIN:
-                break;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-            break;
-          // warrior can use abilities on enemy pieces and empty squares
-          case PieceType.P1_WARRIOR:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                continue;
-              case PieceType.P1_MAGE:
-                continue;
-              case PieceType.P1_PAWN:
-                continue;
-              case PieceType.P1_WARRIOR:
-                continue;
-              case PieceType.P1_ASSASSIN:
-                continue;
-              case PieceType.P2_KING:
-                break;
-              case PieceType.P2_MAGE:
-                break;
-              case PieceType.P2_PAWN:
-                break;
-              case PieceType.P2_WARRIOR:
-                break;
-              case PieceType.P2_ASSASSIN:
-                break;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-            break;
-          // assassin can use abilities on enemy pieces and empty squares
-          case PieceType.P1_ASSASSIN:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                continue;
-              case PieceType.P1_MAGE:
-                continue;
-              case PieceType.P1_PAWN:
-                continue;
-              case PieceType.P1_WARRIOR:
-                continue;
-              case PieceType.P1_ASSASSIN:
-                continue;
-              case PieceType.P2_KING:
-                break;
-              case PieceType.P2_MAGE:
-                break;
-              case PieceType.P2_PAWN:
-                break;
-              case PieceType.P2_WARRIOR:
-                break;
-              case PieceType.P2_ASSASSIN:
-                break;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-            break;
 
-          // king can use abilities on enemy pieces and empty squares
-          case PieceType.P2_KING:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                break;
-              case PieceType.P1_MAGE:
-                break;
-              case PieceType.P1_PAWN:
-                break;
-              case PieceType.P1_WARRIOR:
-                break;
-              case PieceType.P1_ASSASSIN:
-                break;
-              case PieceType.P2_KING:
-                continue;
-              case PieceType.P2_MAGE:
-                continue;
-              case PieceType.P2_PAWN:
-                continue;
-              case PieceType.P2_WARRIOR:
-                continue;
-              case PieceType.P2_ASSASSIN:
-                continue;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-          // mage can use abilities on enemy pieces and empty squares
-          case PieceType.P2_MAGE:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                break;
-              case PieceType.P1_MAGE:
-                break;
-              case PieceType.P1_PAWN:
-                break;
-              case PieceType.P1_WARRIOR:
-                break;
-              case PieceType.P1_ASSASSIN:
-                break;
-              case PieceType.P2_KING:
-                continue;
-              case PieceType.P2_MAGE:
-                continue;
-              case PieceType.P2_PAWN:
-                continue;
-              case PieceType.P2_WARRIOR:
-                continue;
-              case PieceType.P2_ASSASSIN:
-                continue;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-            break;
-          // pawn can use abilities on enemy pieces and empty squares
-          case PieceType.P2_PAWN:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                break;
-              case PieceType.P1_MAGE:
-                break;
-              case PieceType.P1_PAWN:
-                break;
-              case PieceType.P1_WARRIOR:
-                break;
-              case PieceType.P1_ASSASSIN:
-                break;
-              case PieceType.P2_KING:
-                continue;
-              case PieceType.P2_MAGE:
-                continue;
-              case PieceType.P2_PAWN:
-                continue;
-              case PieceType.P2_WARRIOR:
-                continue;
-              case PieceType.P2_ASSASSIN:
-                continue;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-            break;
-          // warrior can use abilities on enemy pieces and empty squares
-          case PieceType.P2_WARRIOR:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                break;
-              case PieceType.P1_MAGE:
-                break;
-              case PieceType.P1_PAWN:
-                break;
-              case PieceType.P1_WARRIOR:
-                break;
-              case PieceType.P1_ASSASSIN:
-                break;
-              case PieceType.P2_KING:
-                continue;
-              case PieceType.P2_MAGE:
-                continue;
-              case PieceType.P2_PAWN:
-                continue;
-              case PieceType.P2_WARRIOR:
-                continue;
-              case PieceType.P2_ASSASSIN:
-                continue;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-            break;
-          // assassin can use abilities on enemy pieces and empty squares
-          case PieceType.P2_ASSASSIN:
-            switch(destinationSquarePiece.type) {
-              case PieceType.P1_KING:
-                break;
-              case PieceType.P1_MAGE:
-                break;
-              case PieceType.P1_PAWN:
-                break;
-              case PieceType.P1_WARRIOR:
-                break;
-              case PieceType.P1_ASSASSIN:
-                break;
-              case PieceType.P2_KING:
-                continue;
-              case PieceType.P2_MAGE:
-                continue;
-              case PieceType.P2_PAWN:
-                continue;
-              case PieceType.P2_WARRIOR:
-                continue;
-              case PieceType.P2_ASSASSIN:
-                continue;
-              case PieceType.NO_PIECE:
-                break;
-              default:
-                break;
-            }
-            break;
-          case PieceType.NO_PIECE:
-            break;
-          default:
-            break;
-        }
-
-        let p = new PlayerAction(constants.MOVE_SKIP, constants.MOVE_SKIP, currentAbility.abilitySrcIdx, currentAbility.abilityDstIdx);
-        retval.push(p);
+    let diagonal1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTHEAST];
+    for(let i = 0; i < diagonal1.length; i++) {
+      squareIdx = diagonal1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_ASSASSIN_DAMAGE));
+        break;
+      } else {
+        break;
       }
     }
-    // player can skip both move and ability
-    let p = new PlayerAction(constants.MOVE_SKIP, constants.MOVE_SKIP, constants.ABILITY_SKIP, constants.ABILITY_SKIP);
-    retval.push(p);
+
+    let diagonal2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTHEAST];
+    for(let i = 0; i < diagonal2.length; i++) {
+      squareIdx = diagonal2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_ASSASSIN_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal3: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTHWEST];
+    for(let i = 0; i < diagonal3.length; i++) {
+      squareIdx = diagonal3[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_ASSASSIN_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal4: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTHWEST];
+    for(let i = 0; i < diagonal4.length; i++) {
+      squareIdx = diagonal4[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_ASSASSIN_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
     return retval;
   }
-  
+
+  _p1PawnActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squareIdx: number
+    let moveSquares: Array<number> = GameCache.squareToP1PawnMoveSquares[piece.squareIndex];
+    for(let i = 0; i < moveSquares.length; i++) {
+      squareIdx = moveSquares[i];
+      if(this.board[squareIdx].type != PieceType.NO_PIECE) continue;
+      if(squareIdx > 55) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_PROMOTE_P1_PAWN));
+        continue;
+      }
+      // Is p1 pawn trying to jump over another piece?
+      if(piece.squareIndex - squareIdx == -2 * constants.NUM_COLUMNS ) {
+        // checks whether the square in front of the p1 pawn is empty
+        if(this.board[piece.squareIndex + constants.NUM_COLUMNS].type != PieceType.NO_PIECE) continue;
+      }
+      retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+    }
+
+    let abilitySquares = GameCache.squareToP1PawnAbilitySquares[piece.squareIndex];
+    for(let i = 0; i < abilitySquares.length; i++) {
+      squareIdx = abilitySquares[i];
+      let destinationSquarePiece: Piece = this.board[squareIdx];
+      if(pieceBelongsToPlayer(destinationSquarePiece.type, Player.PLAYER_2)) {
+        if(squareIdx > 55 && constants.PAWN_ABILITY_POINTS >= destinationSquarePiece.healthPoints) {
+          retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_P1_PAWN_DAMAGE_AND_PROMOTION));
+        } else {
+          retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_PAWN_DAMAGE));
+        }
+      }
+    }
+
+    return retval;
+  }
+
+  _p2PawnActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squareIdx: number
+    let moveSquares: Array<number> = GameCache.squareToP2PawnMoveSquares[piece.squareIndex];
+    for(let i = 0; i < moveSquares.length; i++) {
+      squareIdx = moveSquares[i];
+      if(this.board[squareIdx].type != PieceType.NO_PIECE) continue;
+      if(squareIdx < 8) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_PROMOTE_P2_PAWN));
+        continue;
+      }
+      // Is p2 pawn trying to jump over another piece?
+      if(piece.squareIndex - squareIdx == 2 * constants.NUM_COLUMNS ) {
+        // checks whether the square in front of the p2 pawn is empty
+        if(this.board[piece.squareIndex - constants.NUM_COLUMNS].type != PieceType.NO_PIECE) continue;
+      }
+      retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+    }
+
+    let abilitySquares = GameCache.squareToP2PawnAbilitySquares[piece.squareIndex];
+    for(let i = 0; i < abilitySquares.length; i++) {
+      squareIdx = abilitySquares[i];
+      let destinationSquarePiece: Piece = this.board[squareIdx];
+      if(pieceBelongsToPlayer(destinationSquarePiece.type, Player.PLAYER_1)) {
+        if(squareIdx < 8 && constants.PAWN_ABILITY_POINTS >= destinationSquarePiece.healthPoints) {
+          retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_P2_PAWN_DAMAGE_AND_PROMOTION));
+        } else {
+          retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_PAWN_DAMAGE));
+        }
+      }
+    }
+
+    return retval;
+  }
+
+  _p1KingActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squares: Array<number> = GameCache.squareToNeighboringSquares[piece.squareIndex];
+    for(let i = 0; i < squares.length; i++) {
+      let squareIdx: number = squares[i];
+      if(this.board[squareIdx].type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(this.board[squareIdx].type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_KING_DAMAGE));
+      }
+    }
+    if(piece.squareIndex == 4) {
+      // short castle
+      if(
+        this.board[5].type == PieceType.NO_PIECE &&
+        this.board[6].type == PieceType.NO_PIECE &&
+        this.board[7].type == PieceType.P1_WARRIOR
+        ) {
+          retval.push(new PlayerAction(4, 6, ActionType.MOVE_CASTLE))
+        }
+      // long castle
+      if(
+        this.board[3].type == PieceType.NO_PIECE &&
+        this.board[2].type == PieceType.NO_PIECE &&
+        this.board[1].type == PieceType.NO_PIECE &&
+        this.board[0].type == PieceType.P1_WARRIOR
+        ) {
+          retval.push(new PlayerAction(4, 2, ActionType.MOVE_CASTLE))
+        }
+    }
+
+    return retval;
+  }
+
+  _p2KingActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squares: Array<number> = GameCache.squareToNeighboringSquares[piece.squareIndex];
+    for(let i = 0; i < squares.length; i++) {
+      let squareIdx: number = squares[i];
+      if(this.board[squareIdx].type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(this.board[squareIdx].type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_KING_DAMAGE));
+      }
+    }
+
+    if(piece.squareIndex == 60) {
+      // short castle
+      if(
+        this.board[61].type == PieceType.NO_PIECE &&
+        this.board[62].type == PieceType.NO_PIECE &&
+        this.board[63].type == PieceType.P2_WARRIOR
+        ) {
+          retval.push(new PlayerAction(60, 62, ActionType.MOVE_CASTLE))
+        }
+      // long castle
+      if(
+        this.board[59].type == PieceType.NO_PIECE &&
+        this.board[58].type == PieceType.NO_PIECE &&
+        this.board[57].type == PieceType.NO_PIECE &&
+        this.board[56].type == PieceType.P2_WARRIOR
+        ) {
+          retval.push(new PlayerAction(60, 58, ActionType.MOVE_CASTLE))
+        }
+    }
+
+    return retval;
+  }
+
+  _p1MageActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squareIdx: number;
+
+    let vertical1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTH];
+    for(let i = 0; i < vertical1.length; i++) {
+      squareIdx = vertical1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTHEAST];
+    for(let i = 0; i < diagonal1.length; i++) {
+      squareIdx = diagonal1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+
+    let horizontal1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.EAST];
+    for(let i = 0; i < horizontal1.length; i++) {
+      squareIdx = horizontal1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTHEAST];
+    for(let i = 0; i < diagonal2.length; i++) {
+      squareIdx = diagonal2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let vertical2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTH];
+    for(let i = 0; i < vertical2.length; i++) {
+      squareIdx = vertical2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal3: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTHWEST];
+    for(let i = 0; i < diagonal3.length; i++) {
+      squareIdx = diagonal3[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let horizontal2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.WEST];
+    for(let i = 0; i < horizontal2.length; i++) {
+      squareIdx = horizontal2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal4: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTHWEST];
+    for(let i = 0; i < diagonal4.length; i++) {
+      squareIdx = diagonal4[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    // mage throw assassin
+    for(let k = 0; k < constants.NUM_DIAGONAL_DIRECTIONS; k++) {
+      let direction: Direction = constants.DIAGONAL_DIRECTIONS[k];
+      let directionLine = GameCache.squareToDirectionToLine[piece.squareIndex][direction];
+      for(let i = 0; i < directionLine.length; i++) {
+        let p: Piece = this.board[directionLine[i]];
+        if(p.type != PieceType.P1_ASSASSIN) {
+          break;
+        } else {
+          // is there a valid target?
+          for(let j = i+1; j < directionLine.length; j++) {
+            let p2: Piece = this.board[directionLine[j]];
+            if(pieceBelongsToPlayer(p2.type, Player.PLAYER_2)) {
+              let actionType = ActionType.ABILITY_MAGE_THROW_ASSASSIN;
+              let currentAbility = new PlayerAction(piece.squareIndex, p2.squareIndex, actionType);
+              retval.push(currentAbility);
+              break;
+            } else if(pieceBelongsToPlayer(p2.type, Player.PLAYER_1)) {
+              break;
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    return retval;
+  }
+
+  _p2MageActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squareIdx: number;
+
+    let vertical1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTH];
+    for(let i = 0; i < vertical1.length; i++) {
+      squareIdx = vertical1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTHEAST];
+    for(let i = 0; i < diagonal1.length; i++) {
+      squareIdx = diagonal1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+
+    let horizontal1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.EAST];
+    for(let i = 0; i < horizontal1.length; i++) {
+      squareIdx = horizontal1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTHEAST];
+    for(let i = 0; i < diagonal2.length; i++) {
+      squareIdx = diagonal2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let vertical2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTH];
+    for(let i = 0; i < vertical2.length; i++) {
+      squareIdx = vertical2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal3: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTHWEST];
+    for(let i = 0; i < diagonal3.length; i++) {
+      squareIdx = diagonal3[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let horizontal2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.WEST];
+    for(let i = 0; i < horizontal2.length; i++) {
+      squareIdx = horizontal2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let diagonal4: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTHWEST];
+    for(let i = 0; i < diagonal4.length; i++) {
+      squareIdx = diagonal4[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_MAGE_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    // mage throw assassin
+    for(let k = 0; k < constants.NUM_DIAGONAL_DIRECTIONS; k++) {
+      let direction: Direction = constants.DIAGONAL_DIRECTIONS[k];
+      let directionLine = GameCache.squareToDirectionToLine[piece.squareIndex][direction];
+      for(let i = 0; i < directionLine.length; i++) {
+        let p: Piece = this.board[directionLine[i]];
+        if(p.type != PieceType.P2_ASSASSIN) {
+          break;
+        } else {
+          // is there a valid target?
+          for(let j = i+1; j < directionLine.length; j++) {
+            let p2: Piece = this.board[directionLine[j]];
+            if(pieceBelongsToPlayer(p2.type, Player.PLAYER_1)) {
+              let actionType = ActionType.ABILITY_MAGE_THROW_ASSASSIN;
+              let currentAbility = new PlayerAction(piece.squareIndex, p2.squareIndex, actionType);
+              retval.push(currentAbility);
+              break;
+            } else if(pieceBelongsToPlayer(p2.type, Player.PLAYER_2)) {
+              break;
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    return retval;
+  }
+
+  _p1WarriorActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squareIdx: number;
+
+    let vertical1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTH];
+    for(let i = 0; i < vertical1.length; i++) {
+      squareIdx = vertical1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_WARRIOR_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let horizontal1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.EAST];
+    for(let i = 0; i < horizontal1.length; i++) {
+      squareIdx = horizontal1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_WARRIOR_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let vertical2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTH];
+    for(let i = 0; i < vertical2.length; i++) {
+      squareIdx = vertical2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_WARRIOR_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let horizontal2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.WEST];
+    for(let i = 0; i < horizontal2.length; i++) {
+      squareIdx = horizontal2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_WARRIOR_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    for(let k = 0; k < 4; k++) {
+      let directionLine = GameCache.squareToDirectionToLine[piece.squareIndex][constants.NON_DIAGONAL_DIRECTIONS[k]];
+      for(let i = 0; i < directionLine.length; i++) {
+        let p: Piece = this.board[directionLine[i]];
+        if(p.type != PieceType.P1_WARRIOR) {
+          break;
+        } else {
+          // is there a valid target?
+          for(let j = i+1; j < directionLine.length; j++) {
+            let p2: Piece = this.board[directionLine[j]];
+            if(pieceBelongsToPlayer(p2.type, Player.PLAYER_2)) {
+              let currentAbility = new PlayerAction(piece.squareIndex, p2.squareIndex, ActionType.ABILITY_WARRIOR_THROW_WARRIOR);
+              retval.push(currentAbility);
+              break;
+            } else if(pieceBelongsToPlayer(p2.type, Player.PLAYER_1)) {
+              break;
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    return retval;
+  }
+
+  _p2WarriorActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squareIdx: number;
+
+    let vertical1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.NORTH];
+    for(let i = 0; i < vertical1.length; i++) {
+      squareIdx = vertical1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_WARRIOR_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let horizontal1: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.EAST];
+    for(let i = 0; i < horizontal1.length; i++) {
+      squareIdx = horizontal1[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_WARRIOR_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let vertical2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.SOUTH];
+    for(let i = 0; i < vertical2.length; i++) {
+      squareIdx = vertical2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_WARRIOR_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    let horizontal2: Array<number> = GameCache.squareToDirectionToLine[piece.squareIndex][Direction.WEST];
+    for(let i = 0; i < horizontal2.length; i++) {
+      squareIdx = horizontal2[i];
+      let dstPiece: Piece = this.board[squareIdx];
+      if(dstPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(dstPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, squareIdx, ActionType.ABILITY_WARRIOR_DAMAGE));
+        break;
+      } else {
+        break;
+      }
+    }
+
+    for(let k = 0; k < 4; k++) {
+      let directionLine = GameCache.squareToDirectionToLine[piece.squareIndex][constants.NON_DIAGONAL_DIRECTIONS[k]];
+      for(let i = 0; i < directionLine.length; i++) {
+        let p: Piece = this.board[directionLine[i]];
+        if(p.type != PieceType.P2_WARRIOR) {
+          break;
+        } else {
+          // is there a valid target?
+          for(let j = i+1; j < directionLine.length; j++) {
+            let p2: Piece = this.board[directionLine[j]];
+            if(pieceBelongsToPlayer(p2.type, Player.PLAYER_1)) {
+              let currentAbility = new PlayerAction(piece.squareIndex, p2.squareIndex, ActionType.ABILITY_WARRIOR_THROW_WARRIOR);
+              retval.push(currentAbility);
+              break;
+            } else if(pieceBelongsToPlayer(p2.type, Player.PLAYER_2)) {
+              break;
+            }
+          }
+        }
+        break;
+      }
+    }
+
+    return retval;
+  }
+
+  _p1KnightActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squares: Array<number> = GameCache.squareToKnightActionSquares[piece.squareIndex];
+    for(let i = 0; i < squares.length; i++) {
+      let s: number = squares[i];  
+      let currentPiece: Piece = this.board[s];
+      if(currentPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, s, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(currentPiece.type, Player.PLAYER_2)) {
+        retval.push(new PlayerAction(piece.squareIndex, s, ActionType.ABILITY_KNIGHT_DAMAGE));
+      }
+    }
+
+    return retval;
+  }
+
+  _p2KnightActions(piece: Piece): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>();
+    let squares: Array<number> = GameCache.squareToKnightActionSquares[piece.squareIndex];
+    for(let i = 0; i < squares.length; i++) {
+      let s: number = squares[i];  
+      let currentPiece: Piece = this.board[s];
+      if(currentPiece.type == PieceType.NO_PIECE) {
+        retval.push(new PlayerAction(piece.squareIndex, s, ActionType.MOVE_REGULAR));
+      } else if(pieceBelongsToPlayer(currentPiece.type, Player.PLAYER_1)) {
+        retval.push(new PlayerAction(piece.squareIndex, s, ActionType.ABILITY_KNIGHT_DAMAGE));
+      }
+    }
+
+    return retval;
+  }
+
+  legalActionsByPiece(piece: Piece): Array<PlayerAction> {
+    switch(piece.type) {
+      case PieceType.P1_KING:
+        return this._p1KingActions(piece);
+      case PieceType.P1_MAGE:
+        return this._p1MageActions(piece);
+      case PieceType.P1_PAWN:
+        return this._p1PawnActions(piece);
+      case PieceType.P1_WARRIOR:
+        return this._p1WarriorActions(piece);
+      case PieceType.P1_ASSASSIN:
+        return this._p1AssassinActions(piece);
+      case PieceType.P1_KNIGHT:
+        return this._p1KnightActions(piece);
+      case PieceType.P2_KING:
+        return this._p2KingActions(piece);
+      case PieceType.P2_MAGE:
+        return this._p2MageActions(piece);
+      case PieceType.P2_PAWN:
+        return this._p2PawnActions(piece);
+      case PieceType.P2_WARRIOR:
+        return this._p2WarriorActions(piece);
+      case PieceType.P2_ASSASSIN:
+        return this._p2AssassinActions(piece);
+      case PieceType.P2_KNIGHT:
+        return this._p2KnightActions(piece);
+      default:
+        return new Array<PlayerAction>();
+    }
+  }
+
+  generateLegalActions(): Array<PlayerAction> {
+    let retval = new Array<PlayerAction>()
+    if(this.playerToKing[this.currentPlayer].healthPoints <= 0) {
+      return retval;
+    }
+    let currentPlayerPieces: Array<Piece> = this.playerToPieces[this.currentPlayer];
+    for(let i = 0; i < currentPlayerPieces.length; i++) {
+      let currentPiece: Piece = currentPlayerPieces[i];
+      if(currentPiece.healthPoints <= 0) continue; // dead pieces don't move
+
+      let legalActions: Array<PlayerAction> = this.legalActionsByPiece(currentPiece)
+      retval = retval.concat(legalActions);
+    }
+    // TODO: No longer needed. Remove?
+    // player can also skip the action
+    //let p = new PlayerAction(constants.ACTION_SKIP, constants.ACTION_SKIP, ActionType.SKIP);
+    //retval.push(p);
+    return retval;
+  }
+
+  zobristHash(): number {
+    let hash = 0;
+    let p1Pieces: Array<Piece> = this.playerToPieces[Player.PLAYER_1]
+    for(let i = 0; i < p1Pieces.length; i++) {
+      let currentPiece: Piece = p1Pieces[i];
+      if(currentPiece.healthPoints <= 0) continue;
+      // dividing hp by 10 because health points are { 10, 20, 30, 40, 50, 60 } and 
+      // indexes are { 1, 2, 3, 4, 5, 6 }
+      hash ^= Zobrist.pieceTypeToSquareToHPToKey[currentPiece.type][currentPiece.squareIndex][currentPiece.healthPoints/10];
+    }
+    let p2Pieces: Array<Piece> = this.playerToPieces[Player.PLAYER_2]
+    for(let i = 0; i < p2Pieces.length; i++) {
+      let currentPiece: Piece = p2Pieces[i];
+      if(currentPiece.healthPoints <= 0) continue;
+      // dividing hp by 10 because health points are { 10, 20, 30, 40, 50, 60 } and 
+      // indexes are { 1, 2, 3, 4, 5, 6 }
+      hash ^= Zobrist.pieceTypeToSquareToHPToKey[currentPiece.type][currentPiece.squareIndex][currentPiece.healthPoints/10];
+    }
+    if(this.currentPlayer == Player.PLAYER_2) {
+      hash ^= Zobrist.p2Key;
+    }
+    return hash;
+  }
+
+
 /*
- * Assumes that the move and ability are legal.
- * If the ability is not useful (i.e. does not alter the game state), it's converted to
- * AbilityType.NO_ABILITY.
- * Checking whether ability is useful makes the function ~1.5% slower.
+ * Assumes the action is legal.
  */
-  makeAction(moveSrcIdx: number, moveDstIdx: number, abilitySrcIdx: number, abilityDstIdx: number): UndoInfo {
-    let undoInfo = new UndoInfo();
-    undoInfo.moveSrcIdx = moveSrcIdx;
-    undoInfo.moveDstIdx = moveDstIdx;
-    if(moveSrcIdx != constants.MOVE_SKIP) {
-      this.makeMove(moveSrcIdx, moveDstIdx);
-    }
-    if(abilitySrcIdx != constants.ABILITY_SKIP) {
-      let abilitySrcPiece: Piece = this.board[abilitySrcIdx];
-      let abilityDstPiece: Piece = this.board[abilityDstIdx];
-      let neighboringPiece: Piece;
-      let neighboringSquare: number;
-      switch(abilitySrcPiece.type) {
+  makeAction(playerAction: PlayerAction): UndoInfo {
+    let undoInfo: UndoInfo = new UndoInfo();
+    undoInfo.action = playerAction;
+    if(playerAction.actionType != ActionType.SKIP) {
+      let srcIdx: number = playerAction.srcIdx
+      let dstIdx: number = playerAction.dstIdx
+      let abilitySrcPiece: Piece = this.board[srcIdx];
+      let abilityDstPiece: Piece = this.board[dstIdx];
+      let currentPiece: Piece;
+      let currentSquare: number;
+      let direction: Direction;
+      let directionLine: Array<number>;
+      let squares: Array<number>;
+      let idx: number;
+      let opponentPlayer: Player
+      switch(playerAction.actionType) {
+        case ActionType.MOVE_REGULAR:
+          this.board[playerAction.dstIdx] = this.board[playerAction.srcIdx]
+          this.board[playerAction.dstIdx].squareIndex = playerAction.dstIdx
+          this.board[playerAction.srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: playerAction.srcIdx})
+          break;
+        case ActionType.MOVE_CASTLE:
+          // move king
+          this.board[playerAction.dstIdx] = this.board[playerAction.srcIdx]
+          this.board[playerAction.dstIdx].squareIndex = playerAction.dstIdx
+          this.board[playerAction.srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: playerAction.srcIdx})
+
+          // based on king's destination we can determine which castle it is
+          if(playerAction.dstIdx == 6) {
+            //p1 short castle
+            this.board[5] = this.board[7]
+            this.board[5].squareIndex = 5
+            this.board[7] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: 7})
+          } else if(playerAction.dstIdx == 2) {
+            //p1 long castle
+            this.board[3] = this.board[0]
+            this.board[3].squareIndex = 3
+            this.board[0] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: 0})
+          } else if(playerAction.dstIdx == 62) {
+            //p2 short castle
+            this.board[61] = this.board[63]
+            this.board[61].squareIndex = 61
+            this.board[63] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: 63})
+          } else { // p2 long castle
+            this.board[59] = this.board[56]
+            this.board[59].squareIndex = 59
+            this.board[56] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: 56})
+          }
+          break;
+
+        case ActionType.MOVE_PROMOTE_P1_PAWN:
+          // save pawn's health points
+          undoInfo.t1 = abilitySrcPiece.healthPoints;
+          // remove pawn from piece array
+          idx = this.playerToPieces[Player.PLAYER_1].indexOf(abilitySrcPiece);
+          this.playerToPieces[Player.PLAYER_1].splice(idx, 1);
+          this.board[playerAction.srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: playerAction.srcIdx})
+
+          // add new warrior
+          this.board[playerAction.dstIdx] = new Piece({type: PieceType.P1_WARRIOR, healthPoints: constants.WARRIOR_STARTING_HEALTH_POINTS, squareIndex: playerAction.dstIdx})
+          this.playerToPieces[Player.PLAYER_1].push(this.board[playerAction.dstIdx]);
+          break;
+        case ActionType.MOVE_PROMOTE_P2_PAWN:
+          // save pawn's health points
+          undoInfo.t1 = abilitySrcPiece.healthPoints;
+          // remove pawn from the piece array
+          idx = this.playerToPieces[Player.PLAYER_2].indexOf(abilitySrcPiece);
+          this.playerToPieces[Player.PLAYER_2].splice(idx, 1);
+          this.board[playerAction.srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: playerAction.srcIdx})
+
+          // add new warrior
+          this.board[playerAction.dstIdx] = new Piece({type: PieceType.P2_WARRIOR, healthPoints: constants.WARRIOR_STARTING_HEALTH_POINTS, squareIndex: playerAction.dstIdx})
+          this.playerToPieces[Player.PLAYER_2].push(this.board[playerAction.dstIdx]);
+
+          break;
+
         // king does single target damage
-        case PieceType.P1_KING:
-          if(player1OrEmpty(abilityDstPiece.type)) {
-            undoInfo.abilityType = AbilityType.NO_ABILITY;
-            break;
-          }
+        case ActionType.ABILITY_KING_DAMAGE:
           abilityDstPiece.healthPoints -= constants.KING_ABILITY_POINTS;
-          undoInfo.abilityType = AbilityType.KING_DAMAGE;
-          undoInfo.affectedPieces.push(abilityDstPiece);
-          if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
-          }
-          break;
-        // mage damages attacked piece and all enemy pieces that are touching it
-        case PieceType.P1_MAGE:
-          if(player1OrEmpty(abilityDstPiece.type)) {
-            undoInfo.abilityType = AbilityType.NO_ABILITY;
-            break;
-          }
-          abilityDstPiece.healthPoints -= constants.MAGE_ABILITY_POINTS;
-          undoInfo.abilityType = AbilityType.MAGE_DAMAGE;
-          undoInfo.affectedPieces.push(abilityDstPiece);
-          if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
-          }
-          for(let i = 0; i < this.gameCache.squareToNeighboringSquares[abilityDstIdx].length; i++) {
-            neighboringSquare = this.gameCache.squareToNeighboringSquares[abilityDstIdx][i];
-            neighboringPiece = this.board[neighboringSquare];
-            if(player1OrEmpty(neighboringPiece.type)) continue;  // don't damage your own pieces
-            neighboringPiece.healthPoints -= constants.MAGE_ABILITY_POINTS;
-            undoInfo.affectedPieces.push(neighboringPiece);
-            if(neighboringPiece.healthPoints <= 0) {
-              this.board[neighboringSquare] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
-            }
-          }
-          break;
-        case PieceType.P1_PAWN:
-          if(player1OrEmpty(abilityDstPiece.type)) {
-            undoInfo.abilityType = AbilityType.NO_ABILITY;
-            break;
-          }
-          abilityDstPiece.healthPoints -= constants.PAWN_ABILITY_POINTS;
-          undoInfo.abilityType = AbilityType.PAWN_DAMAGE;
-          undoInfo.affectedPieces.push(abilityDstPiece);
-          if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
-          }
-          break;
-        case PieceType.P1_WARRIOR:
-          if(player1OrEmpty(abilityDstPiece.type)) {
-            undoInfo.abilityType = AbilityType.NO_ABILITY;
-            break;
-          }
-          abilityDstPiece.healthPoints -= constants.WARRIOR_ABILITY_POINTS;
-          undoInfo.abilityType = AbilityType.WARRIOR_DAMAGE;
-          undoInfo.affectedPieces.push(abilityDstPiece);
-          if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
-          }
-          break;
-        case PieceType.P1_ASSASSIN:
-          if(player1OrEmpty(abilityDstPiece.type)) {
-            undoInfo.abilityType = AbilityType.NO_ABILITY;
-            break;
-          }
-          abilityDstPiece.healthPoints -= constants.ASSASSIN_ABILITY_POINTS;
-          undoInfo.abilityType = AbilityType.ASSASSIN_DAMAGE;
           undoInfo.affectedPieces[0] = abilityDstPiece;
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
+            // move piece to the destroyed piece's location
+            this.board[dstIdx] = abilitySrcPiece;
+            this.board[srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: srcIdx});
+            abilitySrcPiece.squareIndex = dstIdx;
           }
           break;
-        case PieceType.P2_KING:
-          if(player2OrEmpty(abilityDstPiece.type)) {
-            undoInfo.abilityType = AbilityType.NO_ABILITY;
-            break;
-          }
-          abilityDstPiece.healthPoints -= constants.KING_ABILITY_POINTS;
-          undoInfo.abilityType = AbilityType.KING_DAMAGE;
-          undoInfo.affectedPieces.push(abilityDstPiece);
-          if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
-          }
-          break;
-        case PieceType.P2_MAGE:
-          if(player2OrEmpty(abilityDstPiece.type)) {
-            undoInfo.abilityType = AbilityType.NO_ABILITY;
-            break;
-          }
+        case ActionType.ABILITY_MAGE_DAMAGE:
           abilityDstPiece.healthPoints -= constants.MAGE_ABILITY_POINTS;
-          undoInfo.abilityType = AbilityType.MAGE_DAMAGE;
-          undoInfo.affectedPieces.push(abilityDstPiece);
+          undoInfo.affectedPieces[0] = abilityDstPiece;
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
-          }
-          for(let i = 0; i < this.gameCache.squareToNeighboringSquares[abilityDstIdx].length; i++) {
-            neighboringSquare = this.gameCache.squareToNeighboringSquares[abilityDstIdx][i];
-            neighboringPiece = this.board[neighboringSquare];
-            if(player2OrEmpty(neighboringPiece.type)) continue;  // don't damage your own pieces
-            neighboringPiece.healthPoints -= constants.MAGE_ABILITY_POINTS;
-            // i+1 because 0 is for abilityDstPiece
-            undoInfo.affectedPieces.push(neighboringPiece);
-            if(neighboringPiece.healthPoints <= 0) {
-              this.board[neighboringSquare] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
+            // move piece to the destroyed piece's location
+            this.board[dstIdx] = abilitySrcPiece;
+            this.board[srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: srcIdx});
+            abilitySrcPiece.squareIndex = dstIdx;
+          } else {
+            // find square to leap to (if possible)
+            direction = GameCache.srcSquareToDstSquareToDirection[srcIdx][dstIdx]
+            directionLine = GameCache.squareToDirectionToLine[srcIdx][direction];
+            idx = 0;
+            while(true) {
+              currentPiece = this.board[directionLine[idx]];
+              if(!(currentPiece.type == PieceType.NO_PIECE)) break;
+              idx++;
+            }
+            if(idx != 0) {
+              // leap
+              currentSquare = directionLine[idx-1];
+              undoInfo.t1 = currentSquare;
+              
+              this.board[currentSquare] = this.board[srcIdx];
+              this.board[currentSquare].squareIndex = currentSquare;
+              this.board[srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: srcIdx})
             }
           }
           break;
-        case PieceType.P2_PAWN:
-          if(player2OrEmpty(abilityDstPiece.type)) {
-            undoInfo.abilityType = AbilityType.NO_ABILITY;
-            break;
+        case ActionType.ABILITY_MAGE_THROW_ASSASSIN:
+          if(abilitySrcPiece.type == PieceType.P1_MAGE) {
+            opponentPlayer = Player.PLAYER_2;
+          } else {
+            opponentPlayer = Player.PLAYER_1;
           }
+
+          direction = GameCache.srcSquareToDstSquareToDirection[srcIdx][dstIdx]
+          directionLine = GameCache.squareToDirectionToLine[srcIdx][direction];
+          idx = directionLine[0] // assassin to be thrown is at this index
+          undoInfo.t1 = idx;
+          undoInfo.affectedPieces.push(this.board[idx]);
+
+          abilityDstPiece.healthPoints -= constants.MAGE_THROW_DAMAGE_1;
+          undoInfo.affectedPieces.push(abilityDstPiece);
+
+          // throw assassin
+          this.board[dstIdx] = this.board[idx];
+          this.board[dstIdx].squareIndex = dstIdx;
+          this.board[idx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: idx});
+
+          // AOE damage
+          squares = GameCache.squareToNeighboringSquares[dstIdx];
+          for(let i = 0; i < squares.length; i++) {
+            currentPiece = this.board[squares[i]]
+            if(pieceBelongsToPlayer(currentPiece.type, opponentPlayer)) {
+              currentPiece.healthPoints -= constants.MAGE_THROW_DAMAGE_2;
+              undoInfo.affectedPieces.push(currentPiece);
+              if(currentPiece.healthPoints <= 0) {
+                this.board[currentPiece.squareIndex] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: currentPiece.squareIndex});
+              }
+            }
+          }
+          break;
+        case ActionType.ABILITY_PAWN_DAMAGE:
           abilityDstPiece.healthPoints -= constants.PAWN_ABILITY_POINTS;
-          undoInfo.abilityType = AbilityType.PAWN_DAMAGE;
-          undoInfo.affectedPieces.push(abilityDstPiece);
+          undoInfo.affectedPieces[0] = abilityDstPiece;
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
+            // move piece to the destroyed piece's location
+            this.board[dstIdx] = abilitySrcPiece;
+            this.board[srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: srcIdx});
+            abilitySrcPiece.squareIndex = dstIdx;
           }
           break;
-        case PieceType.P2_WARRIOR:
-          if(player2OrEmpty(abilityDstPiece.type)) {
-            undoInfo.abilityType = AbilityType.NO_ABILITY;
-            break;
-          }
+        case ActionType.ABILITY_P1_PAWN_DAMAGE_AND_PROMOTION:
+          // save pawn's health points
+          undoInfo.t1 = abilitySrcPiece.healthPoints;
+          // remove enemy piece
+          abilityDstPiece.healthPoints -= constants.PAWN_ABILITY_POINTS;
+          undoInfo.affectedPieces[0] = abilityDstPiece;
+          //transform pawn into warrior
+          this.board[dstIdx] = this.board[srcIdx];
+          this.board[dstIdx].squareIndex = dstIdx;
+          this.board[dstIdx].type = PieceType.P1_WARRIOR;
+          this.board[dstIdx].healthPoints = constants.WARRIOR_STARTING_HEALTH_POINTS;
+          this.board[srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: srcIdx});
+          break;
+        case ActionType.ABILITY_P2_PAWN_DAMAGE_AND_PROMOTION:
+          // save pawn's health points
+          undoInfo.t1 = abilitySrcPiece.healthPoints;
+          // remove enemy piece
+          abilityDstPiece.healthPoints -= constants.PAWN_ABILITY_POINTS;
+          undoInfo.affectedPieces[0] = abilityDstPiece;
+          //transform pawn into warrior
+          this.board[dstIdx] = this.board[srcIdx];
+          this.board[dstIdx].squareIndex = dstIdx;
+          this.board[dstIdx].type = PieceType.P2_WARRIOR;
+          this.board[dstIdx].healthPoints = constants.WARRIOR_STARTING_HEALTH_POINTS;
+          this.board[srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: srcIdx});
+          break;
+        case ActionType.ABILITY_WARRIOR_DAMAGE:
           abilityDstPiece.healthPoints -= constants.WARRIOR_ABILITY_POINTS;
-          undoInfo.abilityType = AbilityType.WARRIOR_DAMAGE;
-          undoInfo.affectedPieces.push(abilityDstPiece);
+          undoInfo.affectedPieces[0] = abilityDstPiece;
           if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
+            // move piece to the destroyed piece's location
+            this.board[dstIdx] = abilitySrcPiece;
+            this.board[srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: srcIdx});
+            abilitySrcPiece.squareIndex = dstIdx;
+          } else {
+            // find square to leap to (if possible)
+            direction = GameCache.srcSquareToDstSquareToDirection[srcIdx][dstIdx]
+            directionLine = GameCache.squareToDirectionToLine[srcIdx][direction];
+            idx = 0;
+            while(true) {
+              currentPiece = this.board[directionLine[idx]];
+              if(!(currentPiece.type == PieceType.NO_PIECE)) break;
+              idx++;
+            }
+            if(idx != 0) {
+              // leap
+              currentSquare = directionLine[idx-1];
+              undoInfo.t1 = currentSquare;
+              
+              this.board[currentSquare] = this.board[srcIdx];
+              this.board[currentSquare].squareIndex = currentSquare;
+              this.board[srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: srcIdx})
+            }
           }
           break;
-        case PieceType.P2_ASSASSIN:
-          if(player2OrEmpty(abilityDstPiece.type)) {
-            undoInfo.abilityType = AbilityType.NO_ABILITY;
-            break;
+        case ActionType.ABILITY_WARRIOR_THROW_WARRIOR:
+          if(abilitySrcPiece.type == PieceType.P1_WARRIOR) {
+            opponentPlayer = Player.PLAYER_2;
+          } else {
+            opponentPlayer = Player.PLAYER_1;
           }
-          abilityDstPiece.healthPoints -= constants.ASSASSIN_ABILITY_POINTS;
-          undoInfo.abilityType = AbilityType.ASSASSIN_DAMAGE;
+
+          direction = GameCache.srcSquareToDstSquareToDirection[srcIdx][dstIdx]
+          directionLine = GameCache.squareToDirectionToLine[srcIdx][direction];
+          idx = directionLine[0] // warrior to be thrown is at this index
+          undoInfo.t1 = idx;
+          undoInfo.affectedPieces.push(this.board[idx]);
+
+          abilityDstPiece.healthPoints -= constants.WARRIOR_THROW_DAMAGE_1;
           undoInfo.affectedPieces.push(abilityDstPiece);
-          if(abilityDstPiece.healthPoints <= 0) {
-            this.board[abilityDstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: abilityDstIdx});
+
+          // throw warrior
+          this.board[dstIdx] = this.board[idx];
+          this.board[dstIdx].squareIndex = dstIdx;
+          this.board[idx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: idx});
+
+          // AOE damage
+          squares = GameCache.squareToNeighboringSquares[dstIdx];
+          for(let i = 0; i < squares.length; i++) {
+            currentPiece = this.board[squares[i]]
+            if(pieceBelongsToPlayer(currentPiece.type, opponentPlayer)) {
+              currentPiece.healthPoints -= constants.WARRIOR_THROW_DAMAGE_2;
+              undoInfo.affectedPieces.push(currentPiece);
+              if(currentPiece.healthPoints <= 0) {
+                this.board[currentPiece.squareIndex] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: currentPiece.squareIndex});
+              }
+            }
           }
+          break;
+        case ActionType.ABILITY_ASSASSIN_DAMAGE:
+          abilityDstPiece.healthPoints -= constants.ASSASSIN_ABILITY_POINTS;
+          undoInfo.affectedPieces[0] = abilityDstPiece;
+          if(abilityDstPiece.healthPoints <= 0) {
+            // move piece to the destroyed piece's location
+            this.board[dstIdx] = abilitySrcPiece;
+            this.board[srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: srcIdx});
+            abilitySrcPiece.squareIndex = dstIdx;
+          } else {
+            // find square to leap to (if possible)
+            direction = GameCache.srcSquareToDstSquareToDirection[srcIdx][dstIdx]
+            directionLine = GameCache.squareToDirectionToLine[srcIdx][direction];
+            idx = 0;
+            while(true) {
+              currentPiece = this.board[directionLine[idx]];
+              if(!(currentPiece.type == PieceType.NO_PIECE)) break;
+              idx++;
+            }
+            if(idx != 0) {
+              // leap
+              currentSquare = directionLine[idx-1];
+              undoInfo.t1 = currentSquare;
+              
+              this.board[currentSquare] = this.board[srcIdx];
+              this.board[currentSquare].squareIndex = currentSquare;
+              this.board[srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: srcIdx})
+            }
+          }
+          break;
+        case ActionType.ABILITY_KNIGHT_DAMAGE:
+          abilityDstPiece.healthPoints -= constants.KNIGHT_ABILITY_POINTS;
+          undoInfo.affectedPieces[0] = abilityDstPiece;
+          if(abilityDstPiece.healthPoints <= 0) {
+            // move piece to the destroyed piece's location
+            this.board[dstIdx] = abilitySrcPiece;
+            this.board[srcIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: srcIdx});
+            abilitySrcPiece.squareIndex = dstIdx;
+          }
+          break;
+        default:
           break;
       }
-    } else {
-      undoInfo.abilityType = AbilityType.NO_ABILITY;
-    } 
+    }
     this.moveNumber += 1;
     this.currentPlayer = 1 - this.currentPlayer;
+
+    let zh = this.zobristHash();
+    let v = this.repetitions.get(zh)
+    if(v === undefined) {
+      this.repetitions.set(zh, 1)
+    } else {
+      if(v == 2) {
+        this.repetitionsDraw = true;
+      }
+      this.repetitions.set(zh, v + 1)
+    }
     return undoInfo;
   }
 
   undoAction(undoInfo: UndoInfo): void {
-    // undo ability
+    let zh = this.zobristHash();
+    let v = this.repetitions.get(zh)
+    if(v === undefined) {
+      throw new Error(`Attempted to undo position that's not in the repetitions map,\n Zobrist hash: ${zh}\n Dump:\n ${this.dump()}`)
+    } else {
+      if(v == 3) {
+        this.repetitionsDraw = false;
+      }
+      this.repetitions.set(zh, v - 1)
+    }
+
     let affectedPiece: Piece;
-    switch(undoInfo.abilityType) {
-      case AbilityType.KING_DAMAGE:
+    let currentPiece: Piece;
+    let srcIdx: number = undoInfo.action.srcIdx;
+    let dstIdx: number = undoInfo.action.dstIdx;
+    let idx: number
+    switch(undoInfo.action.actionType) {
+      case ActionType.MOVE_REGULAR:
+        this.undoMove(undoInfo.action);
+        break;
+      case ActionType.MOVE_CASTLE:
+        this.undoMove(undoInfo.action);
+        break;
+      case ActionType.MOVE_PROMOTE_P1_PAWN:
+        // remove warrior from piece array
+        currentPiece = this.board[dstIdx];
+        idx = this.playerToPieces[Player.PLAYER_1].indexOf(currentPiece);
+        this.playerToPieces[Player.PLAYER_1].splice(idx, 1);
+        // remove warrior from board
+        this.board[dstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: dstIdx});
+        // restore pawn
+        this.board[srcIdx] = new Piece({type: PieceType.P1_PAWN, healthPoints: undoInfo.t1, squareIndex: srcIdx});
+        this.playerToPieces[Player.PLAYER_1].push(this.board[srcIdx]);
+        break;
+      case ActionType.MOVE_PROMOTE_P2_PAWN:
+        // remove warrior from piece array
+        currentPiece = this.board[dstIdx];
+        idx = this.playerToPieces[Player.PLAYER_2].indexOf(currentPiece);
+        this.playerToPieces[Player.PLAYER_2].splice(idx, 1);
+        // remove warrior from board
+        this.board[dstIdx] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: dstIdx});
+        // restore pawn
+        this.board[srcIdx] = new Piece({type: PieceType.P2_PAWN, healthPoints: undoInfo.t1, squareIndex: srcIdx});
+        this.playerToPieces[Player.PLAYER_2].push(this.board[srcIdx]);
+        break;
+      case ActionType.ABILITY_KING_DAMAGE:
         affectedPiece = undoInfo.affectedPieces[0];
         affectedPiece.healthPoints += constants.KING_ABILITY_POINTS;
-        if(this.board[affectedPiece.squareIndex].type == PieceType.NO_PIECE) {
+        if(this.board[affectedPiece.squareIndex] != affectedPiece) {
+          // Piece was destroyed. 
+          // Move king to previous location
+          this.board[srcIdx] = this.board[dstIdx];
+          this.board[srcIdx].squareIndex = srcIdx;
+          this.board[dstIdx] = affectedPiece;
+        }
+        break;
+      case ActionType.ABILITY_MAGE_DAMAGE:
+        affectedPiece = undoInfo.affectedPieces[0];
+        affectedPiece.healthPoints += constants.MAGE_ABILITY_POINTS;
+        if(this.board[affectedPiece.squareIndex] != affectedPiece) {
+          // Piece was destroyed. 
+          // Move mage to previous location
+          this.board[srcIdx] = this.board[dstIdx];
+          this.board[srcIdx].squareIndex = srcIdx;
+          this.board[dstIdx] = affectedPiece;
+        } else if(undoInfo.t1 !== undefined) {
+          // undo leap
+          this.board[srcIdx] = this.board[undoInfo.t1];
+          this.board[srcIdx].squareIndex = srcIdx;
+          this.board[undoInfo.t1] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: undoInfo.t1});
+        }
+        break;
+      case ActionType.ABILITY_MAGE_THROW_ASSASSIN:
+        this.board[undoInfo.t1] = undoInfo.affectedPieces[0]; // thrown assassin is always at 0th index.
+        this.board[undoInfo.t1].squareIndex = undoInfo.t1;
+
+        // destroyed piece is always at 1st index
+        affectedPiece = undoInfo.affectedPieces[1];
+        affectedPiece.healthPoints += constants.MAGE_THROW_DAMAGE_1;
+        this.board[affectedPiece.squareIndex] = affectedPiece;
+
+        // AOE
+        for(let i = 2; i < undoInfo.affectedPieces.length; i++) {
+          affectedPiece = undoInfo.affectedPieces[i];
+          affectedPiece.healthPoints += constants.MAGE_THROW_DAMAGE_2;
           this.board[affectedPiece.squareIndex] = affectedPiece;
         }
         break;
-      case AbilityType.MAGE_DAMAGE:
-        for(let i = 0; i < undoInfo.affectedPieces.length; i++){
+      case ActionType.ABILITY_WARRIOR_THROW_WARRIOR:
+        this.board[undoInfo.t1] = undoInfo.affectedPieces[0]; // thrown warrior is always at 0th index.
+        this.board[undoInfo.t1].squareIndex = undoInfo.t1;
+
+        // destroyed piece is always at 1st index
+        affectedPiece = undoInfo.affectedPieces[1];
+        affectedPiece.healthPoints += constants.WARRIOR_THROW_DAMAGE_1;
+        this.board[affectedPiece.squareIndex] = affectedPiece;
+
+        // AOE
+        for(let i = 2; i < undoInfo.affectedPieces.length; i++) {
           affectedPiece = undoInfo.affectedPieces[i];
-          affectedPiece.healthPoints += constants.MAGE_ABILITY_POINTS;
-          if(this.board[affectedPiece.squareIndex].type == PieceType.NO_PIECE) {
-            this.board[affectedPiece.squareIndex] = affectedPiece;
-          }
+          affectedPiece.healthPoints += constants.WARRIOR_THROW_DAMAGE_2;
+          this.board[affectedPiece.squareIndex] = affectedPiece;
         }
         break;
-      case AbilityType.WARRIOR_DAMAGE:
+      case ActionType.ABILITY_WARRIOR_DAMAGE:
         affectedPiece = undoInfo.affectedPieces[0];
         affectedPiece.healthPoints += constants.WARRIOR_ABILITY_POINTS;
-        if(this.board[affectedPiece.squareIndex].type == PieceType.NO_PIECE) {
-          this.board[affectedPiece.squareIndex] = affectedPiece;
+        if(this.board[affectedPiece.squareIndex] != affectedPiece) {
+          // Piece was destroyed. 
+          // Move warrior to previous location
+          this.board[srcIdx] = this.board[dstIdx];
+          this.board[srcIdx].squareIndex = srcIdx;
+          this.board[dstIdx] = affectedPiece;
+        } else if(undoInfo.t1 !== undefined) {
+          // undo leap
+          this.board[srcIdx] = this.board[undoInfo.t1];
+          this.board[srcIdx].squareIndex = srcIdx;
+          this.board[undoInfo.t1] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: undoInfo.t1});
         }
         break;
-      case AbilityType.ASSASSIN_DAMAGE:
+      case ActionType.ABILITY_ASSASSIN_DAMAGE:
         affectedPiece = undoInfo.affectedPieces[0];
         affectedPiece.healthPoints += constants.ASSASSIN_ABILITY_POINTS;
-        if(this.board[affectedPiece.squareIndex].type == PieceType.NO_PIECE) {
-          this.board[affectedPiece.squareIndex] = affectedPiece;
+        if(this.board[affectedPiece.squareIndex] != affectedPiece) {
+          // Piece was destroyed. 
+          // Move assassin to previous location
+          this.board[srcIdx] = this.board[dstIdx];
+          this.board[srcIdx].squareIndex = srcIdx;
+          this.board[dstIdx] = affectedPiece;
+        } else if(undoInfo.t1 !== undefined) {
+          // undo leap
+          this.board[srcIdx] = this.board[undoInfo.t1];
+          this.board[srcIdx].squareIndex = srcIdx;
+          this.board[undoInfo.t1] = new Piece({type: PieceType.NO_PIECE, healthPoints: 0, squareIndex: undoInfo.t1});
         }
         break;
-      case AbilityType.PAWN_DAMAGE:
+      case ActionType.ABILITY_KNIGHT_DAMAGE:
+        affectedPiece = undoInfo.affectedPieces[0];
+        affectedPiece.healthPoints += constants.KNIGHT_ABILITY_POINTS;
+        if(this.board[affectedPiece.squareIndex] != affectedPiece) {
+          // Piece was destroyed. 
+          // Move knight to previous location
+          this.board[srcIdx] = this.board[dstIdx];
+          this.board[srcIdx].squareIndex = srcIdx;
+          this.board[dstIdx] = affectedPiece;
+        }
+        break;
+      case ActionType.ABILITY_PAWN_DAMAGE:
         affectedPiece = undoInfo.affectedPieces[0];
         affectedPiece.healthPoints += constants.PAWN_ABILITY_POINTS;
-        if(this.board[affectedPiece.squareIndex].type == PieceType.NO_PIECE) {
-          this.board[affectedPiece.squareIndex] = affectedPiece;
+        if(this.board[affectedPiece.squareIndex] != affectedPiece) {
+          // Piece was destroyed. 
+          // Move pawn to previous location
+          this.board[srcIdx] = this.board[dstIdx];
+          this.board[srcIdx].squareIndex = srcIdx;
+          this.board[dstIdx] = affectedPiece;
         }
         break;
-      case AbilityType.NO_ABILITY:
+      case ActionType.ABILITY_P1_PAWN_DAMAGE_AND_PROMOTION:
+        // transform warrior -> pawn and move back
+        this.board[srcIdx] = this.board[dstIdx];
+        this.board[srcIdx].squareIndex = srcIdx;
+        this.board[srcIdx].healthPoints = undoInfo.t1;
+        this.board[srcIdx].type = PieceType.P1_PAWN;
+
+        // restore captured piece
+        affectedPiece = undoInfo.affectedPieces[0];
+        affectedPiece.healthPoints += constants.PAWN_ABILITY_POINTS;
+        this.board[dstIdx] = affectedPiece;
+        break;
+      case ActionType.ABILITY_P2_PAWN_DAMAGE_AND_PROMOTION:
+        // transform warrior -> pawn and move back
+        this.board[srcIdx] = this.board[dstIdx];
+        this.board[srcIdx].squareIndex = srcIdx;
+        this.board[srcIdx].healthPoints = undoInfo.t1;
+        this.board[srcIdx].type = PieceType.P2_PAWN;
+
+        // restore captured piece
+        affectedPiece = undoInfo.affectedPieces[0];
+        affectedPiece.healthPoints += constants.PAWN_ABILITY_POINTS;
+        this.board[dstIdx] = affectedPiece;
+        break;
+      case ActionType.SKIP:
         break;
       default:
         break;
-    }
-    // undo move
-    if(undoInfo.moveSrcIdx != constants.MOVE_SKIP) {
-      this.undoMove(undoInfo.moveSrcIdx, undoInfo.moveDstIdx);
     }
     this.moveNumber -= 1;
     this.currentPlayer = 1 - this.currentPlayer;
@@ -1913,459 +1696,9 @@ export class Game {
     return retval
   }
   
-  isActionLegal(moveSrcIdx: number, moveDstIdx: number, abilitySrcIdx: number, abilityDstIdx: number): boolean {
-    // It's important for this method to not have many exit points because it's altering the game
-    // state. If a return statement is between makeMove and undoMove, game state will remain changed
-    // which shouldn't happen in a method that checks action legality.
-    let validInput: boolean = isActionValid(moveSrcIdx, moveDstIdx, abilitySrcIdx, abilityDstIdx);
-    if(!validInput) return false;
-
-    let moveLegal = false;
-    let abilityLegal = false;
-    let movePieceBelongsToCurrentPlayerOrMoveSkip = false;
-    let abilityPieceBelongsToCurrentPlayerOrAbilitySkip = false;
-    let movePieceIsAliveOrMoveSkip = false;
-    let abilityPieceIsAliveOrAbilitySkip = false;
-    let abilityDstPieceBelongsToCurrentPlayer = false; // are you trying to attack your own piece?
-    let currentPlayersKingIsAlive = false;
-    let movePiece: Piece;
-    let abilityPiece: Piece;
-    let abilityDstPiece: Piece;
-
-    if(moveSrcIdx == constants.MOVE_SKIP && moveDstIdx == constants.MOVE_SKIP) {
-      moveLegal = true;
-      movePieceBelongsToCurrentPlayerOrMoveSkip = true;
-      movePieceIsAliveOrMoveSkip = true;
-    } else {
-      movePiece = this.board[moveSrcIdx];
-      if(pieceBelongsToPlayer(movePiece.type, this.currentPlayer)) {
-        movePieceBelongsToCurrentPlayerOrMoveSkip = true;
-      }
-      if(movePiece.healthPoints > 0) {
-        movePieceIsAliveOrMoveSkip = true;
-      }
-      let legalMovesOnEmptyBoard: Array<PlayerMove> = this.gameCache.pieceTypeToSquareIndexToLegalMoves[movePiece.type][movePiece.squareIndex];
-      for(let i = 0; i < legalMovesOnEmptyBoard.length; i++) {
-        let currentMove: PlayerMove = legalMovesOnEmptyBoard[i];
-        // Is p1 pawn trying to jump over another piece?
-        if(movePiece.type == PieceType.P1_PAWN &&
-            movePiece.squareIndex - currentMove.moveDstIdx == -2 * constants.NUM_COLUMNS 
-            ) {
-          // checks whether square in front of the p1 pawn is empty
-          if(this.board[movePiece.squareIndex + constants.NUM_COLUMNS].type !== PieceType.NO_PIECE) continue;
-        }
-
-        // Is p2 pawn trying to jump over another piece?
-        if(movePiece.type == PieceType.P2_PAWN &&
-            movePiece.squareIndex - currentMove.moveDstIdx == 2 * constants.NUM_COLUMNS 
-            ) {
-          // checks whether square in front of the p2 pawn is empty
-          if(this.board[movePiece.squareIndex - constants.NUM_COLUMNS].type != PieceType.NO_PIECE) continue;
-        }
-
-        if(this.board[currentMove.moveDstIdx].type == PieceType.NO_PIECE && 
-            currentMove.moveDstIdx == moveDstIdx) {
-          moveLegal = true;
-          this.makeMove(moveSrcIdx, moveDstIdx);
-          break;
-        }
-      }
-    }
-    if(abilitySrcIdx == constants.ABILITY_SKIP && abilityDstIdx == constants.ABILITY_SKIP) {
-      abilityLegal = true;
-      abilityPieceBelongsToCurrentPlayerOrAbilitySkip = true;
-      abilityPieceIsAliveOrAbilitySkip = true;
-    } else {
-      abilityPiece = this.board[abilitySrcIdx];
-      abilityDstPiece = this.board[abilityDstIdx];
-      if(pieceBelongsToPlayer(abilityPiece.type, this.currentPlayer)) {
-        abilityPieceBelongsToCurrentPlayerOrAbilitySkip = true;
-      }
-      if(abilityPiece.healthPoints > 0) {
-        abilityPieceIsAliveOrAbilitySkip = true;
-      }
-      if(pieceBelongsToPlayer(abilityDstPiece.type, this.currentPlayer)) {
-        abilityDstPieceBelongsToCurrentPlayer = true;
-      }
-      let legalAbilitiesOnEmptyBoard: Array<PlayerAbility> = this.gameCache.pieceTypeToSquareIndexToLegalAbilities[abilityPiece.type][abilityPiece.squareIndex];
-      for(let i = 0; i < legalAbilitiesOnEmptyBoard.length; i++) {
-        let currentAbility: PlayerAbility = legalAbilitiesOnEmptyBoard[i];
-        if(currentAbility.abilityDstIdx === abilityDstIdx) {
-          abilityLegal = true;
-          break;
-        }
-      }
-    }
-
-    if(moveSrcIdx != constants.MOVE_SKIP && moveLegal) {
-      this.undoMove(moveSrcIdx, moveDstIdx);
-    }
-
-    currentPlayersKingIsAlive = this.playerToPieces[this.currentPlayer][constants.KING_PIECE_INDEX].healthPoints > 0;
-    
-    if(moveLegal && abilityLegal && movePieceBelongsToCurrentPlayerOrMoveSkip &&
-        abilityPieceBelongsToCurrentPlayerOrAbilitySkip && movePieceIsAliveOrMoveSkip &&
-        abilityPieceIsAliveOrAbilitySkip && currentPlayersKingIsAlive) {
-      return true;
-    } else {
-      return false;
-    }
-  }
-
-  /*
-   * Assumes that the game is not over.
-   */
-  allLegalAbilitiesByPiece(srcSquareIdx: number): Array<PlayerAbility> {
-    let retval = new Array<PlayerAbility>()
-    let piece: Piece = this.board[srcSquareIdx];
-    if((!pieceBelongsToPlayer(piece.type, this.currentPlayer)) ||
-        piece.healthPoints <= 0) {
-      return retval;
-    }
-    let legalAbilitiesOnAnEmptyBoard: Array<PlayerAbility> = this.gameCache.pieceTypeToSquareIndexToLegalAbilities[piece.type][piece.squareIndex];
-    let abilityDstPiece: Piece;
-    legalAbilitiesOnAnEmptyBoard.forEach(ability => {
-      abilityDstPiece = this.board[ability.abilityDstIdx]
-      if(!pieceBelongsToPlayer(abilityDstPiece.type, this.currentPlayer)) {
-        retval.push(ability)
-      }
-    })
-    return retval;
-  }
-
-  /*
-   * Assumes that the game is not over.
-   * Useful abilities are those that change the game state.
-   * For example, warrior attacking an empty square is legal but doesn't change the game state.
-   */
-  usefulLegalAbilitiesByPiece(srcSquareIdx: number): Array<PlayerAbility> {
-    let retval = new Array<PlayerAbility>()
-    let piece: Piece = this.board[srcSquareIdx];
-    if((!pieceBelongsToPlayer(piece.type, this.currentPlayer)) ||
-        piece.healthPoints <= 0) {
-      return retval;
-    }
-    let legalAbilitiesOnEmptyBoard: Array<PlayerAbility> = this.gameCache.pieceTypeToSquareIndexToLegalAbilities[piece.type][piece.squareIndex];
-    for(let l = 0; l < legalAbilitiesOnEmptyBoard.length; l++) {
-      let currentAbility: PlayerAbility = legalAbilitiesOnEmptyBoard[l];
-      let destinationSquarePiece: Piece = this.board[currentAbility.abilityDstIdx];
-      // exclude useless abilities, e.g. warrior attacking empty square
-      switch(piece.type) {
-        // king can only use abilities on enemy pieces
-        case PieceType.P1_KING:
-          switch(destinationSquarePiece.type) {
-            case PieceType.P1_KING:
-              continue;
-            case PieceType.P1_MAGE:
-              continue;
-            case PieceType.P1_PAWN:
-              continue;
-            case PieceType.P1_WARRIOR:
-              continue;
-            case PieceType.P1_ASSASSIN:
-              continue;
-            case PieceType.P2_KING:
-              break;
-            case PieceType.P2_MAGE:
-              break;
-            case PieceType.P2_PAWN:
-              break;
-            case PieceType.P2_WARRIOR:
-              break;
-            case PieceType.P2_ASSASSIN:
-              break;
-            case PieceType.NO_PIECE:
-              continue;
-            default:
-              break;
-          }
-        // mage can only use abilities on enemy pieces
-        case PieceType.P1_MAGE:
-          switch(destinationSquarePiece.type) {
-            case PieceType.P1_KING:
-              continue;
-            case PieceType.P1_MAGE:
-              continue;
-            case PieceType.P1_PAWN:
-              continue;
-            case PieceType.P1_WARRIOR:
-              continue;
-            case PieceType.P1_ASSASSIN:
-              continue;
-            case PieceType.P2_KING:
-              break;
-            case PieceType.P2_MAGE:
-              break;
-            case PieceType.P2_PAWN:
-              break;
-            case PieceType.P2_WARRIOR:
-              break;
-            case PieceType.P2_ASSASSIN:
-              break;
-            case PieceType.NO_PIECE:
-              continue;
-            default:
-              break;
-          }
-          break;
-        // pawn can only use abilities on enemy pieces
-        case PieceType.P1_PAWN:
-          switch(destinationSquarePiece.type) {
-            case PieceType.P1_KING:
-              continue;
-            case PieceType.P1_MAGE:
-              continue;
-            case PieceType.P1_PAWN:
-              continue;
-            case PieceType.P1_WARRIOR:
-              continue;
-            case PieceType.P1_ASSASSIN:
-              continue;
-            case PieceType.P2_KING:
-              break;
-            case PieceType.P2_MAGE:
-              break;
-            case PieceType.P2_PAWN:
-              break;
-            case PieceType.P2_WARRIOR:
-              break;
-            case PieceType.P2_ASSASSIN:
-              break;
-            case PieceType.NO_PIECE:
-              continue;
-            default:
-              break;
-          }
-          break;
-        // warrior can only use abilities on enemy pieces
-        case PieceType.P1_WARRIOR:
-          switch(destinationSquarePiece.type) {
-            case PieceType.P1_KING:
-              continue;
-            case PieceType.P1_MAGE:
-              continue;
-            case PieceType.P1_PAWN:
-              continue;
-            case PieceType.P1_WARRIOR:
-              continue;
-            case PieceType.P1_ASSASSIN:
-              continue;
-            case PieceType.P2_KING:
-              break;
-            case PieceType.P2_MAGE:
-              break;
-            case PieceType.P2_PAWN:
-              break;
-            case PieceType.P2_WARRIOR:
-              break;
-            case PieceType.P2_ASSASSIN:
-              break;
-            case PieceType.NO_PIECE:
-              continue;
-            default:
-              break;
-          }
-          break;
-        // assassin can only use abilities on enemy pieces
-        case PieceType.P1_ASSASSIN:
-          switch(destinationSquarePiece.type) {
-            case PieceType.P1_KING:
-              continue;
-            case PieceType.P1_MAGE:
-              continue;
-            case PieceType.P1_PAWN:
-              continue;
-            case PieceType.P1_WARRIOR:
-              continue;
-            case PieceType.P1_ASSASSIN:
-              continue;
-            case PieceType.P2_KING:
-              break;
-            case PieceType.P2_MAGE:
-              break;
-            case PieceType.P2_PAWN:
-              break;
-            case PieceType.P2_WARRIOR:
-              break;
-            case PieceType.P2_ASSASSIN:
-              break;
-            case PieceType.NO_PIECE:
-              continue;
-            default:
-              break;
-          }
-          break;
-
-        // king can only use abilities on enemy pieces
-        case PieceType.P2_KING:
-          switch(destinationSquarePiece.type) {
-            case PieceType.P1_KING:
-              break;
-            case PieceType.P1_MAGE:
-              break;
-            case PieceType.P1_PAWN:
-              break;
-            case PieceType.P1_WARRIOR:
-              break;
-            case PieceType.P1_ASSASSIN:
-              break;
-            case PieceType.P2_KING:
-              continue;
-            case PieceType.P2_MAGE:
-              continue;
-            case PieceType.P2_PAWN:
-              continue;
-            case PieceType.P2_WARRIOR:
-              continue;
-            case PieceType.P2_ASSASSIN:
-              continue;
-            case PieceType.NO_PIECE:
-              continue;
-            default:
-              break;
-          }
-        // mage can only use abilities on enemy pieces
-        case PieceType.P2_MAGE:
-          switch(destinationSquarePiece.type) {
-            case PieceType.P1_KING:
-              break;
-            case PieceType.P1_MAGE:
-              break;
-            case PieceType.P1_PAWN:
-              break;
-            case PieceType.P1_WARRIOR:
-              break;
-            case PieceType.P1_ASSASSIN:
-              break;
-            case PieceType.P2_KING:
-              continue;
-            case PieceType.P2_MAGE:
-              continue;
-            case PieceType.P2_PAWN:
-              continue;
-            case PieceType.P2_WARRIOR:
-              continue;
-            case PieceType.P2_ASSASSIN:
-              continue;
-            case PieceType.NO_PIECE:
-              continue;
-            default:
-              break;
-          }
-          break;
-        // pawn can only use abilities on enemy pieces
-        case PieceType.P2_PAWN:
-          switch(destinationSquarePiece.type) {
-            case PieceType.P1_KING:
-              break;
-            case PieceType.P1_MAGE:
-              break;
-            case PieceType.P1_PAWN:
-              break;
-            case PieceType.P1_WARRIOR:
-              break;
-            case PieceType.P1_ASSASSIN:
-              break;
-            case PieceType.P2_KING:
-              continue;
-            case PieceType.P2_MAGE:
-              continue;
-            case PieceType.P2_PAWN:
-              continue;
-            case PieceType.P2_WARRIOR:
-              continue;
-            case PieceType.P2_ASSASSIN:
-              continue;
-            case PieceType.NO_PIECE:
-              continue;
-            default:
-              break;
-          }
-          break;
-        // warrior can only use abilities on enemy pieces
-        case PieceType.P2_WARRIOR:
-          switch(destinationSquarePiece.type) {
-            case PieceType.P1_KING:
-              break;
-            case PieceType.P1_MAGE:
-              break;
-            case PieceType.P1_PAWN:
-              break;
-            case PieceType.P1_WARRIOR:
-              break;
-            case PieceType.P1_ASSASSIN:
-              break;
-            case PieceType.P2_KING:
-              continue;
-            case PieceType.P2_MAGE:
-              continue;
-            case PieceType.P2_PAWN:
-              continue;
-            case PieceType.P2_WARRIOR:
-              continue;
-            case PieceType.P2_ASSASSIN:
-              continue;
-            case PieceType.NO_PIECE:
-              continue;
-            default:
-              break;
-          }
-          break;
-        // assassin can only use abilities on enemy pieces
-        case PieceType.P2_ASSASSIN:
-          switch(destinationSquarePiece.type) {
-            case PieceType.P1_KING:
-              break;
-            case PieceType.P1_MAGE:
-              break;
-            case PieceType.P1_PAWN:
-              break;
-            case PieceType.P1_WARRIOR:
-              break;
-            case PieceType.P1_ASSASSIN:
-              break;
-            case PieceType.P2_KING:
-              continue;
-            case PieceType.P2_MAGE:
-              continue;
-            case PieceType.P2_PAWN:
-              continue;
-            case PieceType.P2_WARRIOR:
-              continue;
-            case PieceType.P2_ASSASSIN:
-              continue;
-            case PieceType.NO_PIECE:
-              continue;
-            default:
-              break;
-          }
-          break;
-        case PieceType.NO_PIECE:
-          break;
-        default:
-          break;
-      }
-      retval.push(currentAbility);
-    }
-    return retval;
-  }
-
-  /*
-   * Assumes that the game is not over.
-   */
-  legalMovesByPiece(srcSquareIdx: number): Array<PlayerMove> {
-    let retval = new Array<PlayerMove>();
-    let piece: Piece = this.board[srcSquareIdx];
-    if((!pieceBelongsToPlayer(piece.type, this.currentPlayer)) ||
-        piece.healthPoints <= 0) {
-      return retval;
-    }
-    let legalMovesOnEmptyBoard: Array<PlayerMove> = this.gameCache.pieceTypeToSquareIndexToLegalMoves[piece.type][piece.squareIndex];
-    for(let i = 0; i < legalMovesOnEmptyBoard.length; i++) {
-      if(this.board[legalMovesOnEmptyBoard[i].moveDstIdx].type != PieceType.NO_PIECE) continue;
-      retval.push(legalMovesOnEmptyBoard[i]);
-    }
-    return retval;
+  isActionLegal(srcIdx: number, dstIdx: number): boolean {
+    // TODO
+    return true;
   }
 
   getCurrentPlayer(): Player {
@@ -2384,8 +1717,8 @@ export class Game {
     return this.playerToPieces[player]
   }
 
-  gameOver(): boolean {
-    if(this.p1King.healthPoints <= 0 || this.p2King.healthPoints <= 0) {
+  isGameOver(): boolean {
+    if(this.playerToKing[Player.PLAYER_1].healthPoints <= 0 || this.playerToKing[Player.PLAYER_2].healthPoints <= 0 || this.repetitionsDraw) {
       return true
     } else {
       return false
@@ -2393,39 +1726,20 @@ export class Game {
   }
 
   winner(): Player | undefined {
-    if(this.p1King.healthPoints <= 0) {
+    if(this.playerToKing[Player.PLAYER_1].healthPoints <= 0) {
       return Player.PLAYER_2
-    } else if(this.p2King.healthPoints <= 0) {
+    } else if(this.playerToKing[Player.PLAYER_2].healthPoints <= 0) {
       return Player.PLAYER_1
     }
   }
 
   boardFromString(encodedBoard: string): void {
-    this.currentPlayer = Number(encodedBoard.charAt(0));
+    this.currentPlayer = Number(encodedBoard.charAt(0)) as Player;
     this.moveNumber = 0;
-    // pieces need to exist in the piece array even if they're dead
-    // first all pieces are initialized as dead, then they're replaced if found in the encodedBoard
-    let p1Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
-    p1Pieces[constants.KING_PIECE_INDEX] = new Piece({type: PieceType.P1_KING, healthPoints: 0, squareIndex: 0});
-    p1Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: 0, squareIndex: 0});
-    p1Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: 0, squareIndex: 0});
-    p1Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece({type: PieceType.P1_PAWN, healthPoints: 0, squareIndex: 0});
-    p1Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece({type: PieceType.P1_ASSASSIN, healthPoints: 0, squareIndex: 0});
-    p1Pieces[constants.MAGE_PIECE_INDEX] = new Piece({type: PieceType.P1_MAGE, healthPoints: 0, squareIndex: 0});
-    p1Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece({type: PieceType.P1_WARRIOR, healthPoints: 0, squareIndex: 0});
-
-    this.p1King = p1Pieces[constants.KING_PIECE_INDEX]
-
-    let p2Pieces = new Array<Piece>(constants.NUM_STARTING_PIECES);
-    p2Pieces[constants.KING_PIECE_INDEX] = new Piece({type: PieceType.P2_KING, healthPoints: 0, squareIndex: 0});
-    p2Pieces[constants.PAWN_1_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: 0, squareIndex: 0});
-    p2Pieces[constants.PAWN_2_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: 0, squareIndex: 0});
-    p2Pieces[constants.PAWN_3_PIECE_INDEX] = new Piece({type: PieceType.P2_PAWN, healthPoints: 0, squareIndex: 0});
-    p2Pieces[constants.ASSASSIN_PIECE_INDEX] = new Piece({type: PieceType.P2_ASSASSIN, healthPoints: 0, squareIndex: 0});
-    p2Pieces[constants.MAGE_PIECE_INDEX] = new Piece({type: PieceType.P2_MAGE, healthPoints: 0, squareIndex: 0});
-    p2Pieces[constants.WARRIOR_PIECE_INDEX] = new Piece({type: PieceType.P2_WARRIOR, healthPoints: 0, squareIndex: 0});
-
-    this.p2King = p2Pieces[constants.KING_PIECE_INDEX]
+    this.playerToKing[Player.PLAYER_1] = new Piece({type: PieceType.P1_KING, healthPoints: 0, squareIndex: 0});
+    this.playerToKing[Player.PLAYER_2] = new Piece({type: PieceType.P2_KING, healthPoints: 0, squareIndex: 0});
+    let p1Pieces = new Array<Piece>();
+    let p2Pieces = new Array<Piece>();
 
     let b1: string = encodedBoard.substring(2);
     let ar1: string[] = b1.split(",")
@@ -2440,52 +1754,42 @@ export class Game {
         let pieceType: string = ar2[0] + ar2[1]
         if(pieceType == "0king") {
           this.board[boardIdx] = new Piece({type: PieceType.P1_KING, healthPoints: healthPoints, squareIndex: boardIdx});
-          p1Pieces[constants.KING_PIECE_INDEX] = this.board[boardIdx];
-          this.p1King = this.board[boardIdx];
+          p1Pieces.push(this.board[boardIdx]);
+          this.playerToKing[Player.PLAYER_1] = this.board[boardIdx];
         } else if(pieceType == "0pawn") {
           this.board[boardIdx] = new Piece({type: PieceType.P1_PAWN, healthPoints: healthPoints, squareIndex: boardIdx});
-          if(p1Pieces[constants.PAWN_1_PIECE_INDEX].healthPoints <= 0) {
-            p1Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[boardIdx];
-          } else if(p1Pieces[constants.PAWN_2_PIECE_INDEX].healthPoints <= 0) {
-            p1Pieces[constants.PAWN_2_PIECE_INDEX] = this.board[boardIdx];
-          } else if(p1Pieces[constants.PAWN_3_PIECE_INDEX].healthPoints <= 0) {
-            p1Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[boardIdx];
-          } else {
-            throw "Already found 3 living PLAYER_1 Pawns";
-          }
+          p1Pieces.push(this.board[boardIdx]);
         } else if(pieceType == "0mage") {
           this.board[boardIdx] = new Piece({type: PieceType.P1_MAGE, healthPoints: healthPoints, squareIndex: boardIdx});
-          p1Pieces[constants.MAGE_PIECE_INDEX] = this.board[boardIdx];
+          p1Pieces.push(this.board[boardIdx]);
         } else if(pieceType == "0assassin") {
           this.board[boardIdx] = new Piece({type: PieceType.P1_ASSASSIN, healthPoints: healthPoints, squareIndex: boardIdx});
-          p1Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[boardIdx];
+          p1Pieces.push(this.board[boardIdx]);
+        } else if(pieceType == "0knight") {
+          this.board[boardIdx] = new Piece({type: PieceType.P1_KNIGHT, healthPoints: healthPoints, squareIndex: boardIdx});
+          p1Pieces.push(this.board[boardIdx]);
         } else if(pieceType == "0warrior") {
           this.board[boardIdx] = new Piece({type: PieceType.P1_WARRIOR, healthPoints: healthPoints, squareIndex: boardIdx});
-          p1Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[boardIdx];
+          p1Pieces.push(this.board[boardIdx]);
         } else if(pieceType == "1king") {
           this.board[boardIdx] = new Piece({type: PieceType.P2_KING, healthPoints: healthPoints, squareIndex: boardIdx});
-          p2Pieces[constants.KING_PIECE_INDEX] = this.board[boardIdx];
-          this.p2King = this.board[boardIdx];
+          p2Pieces.push(this.board[boardIdx]);
+          this.playerToKing[Player.PLAYER_2] = this.board[boardIdx];
         } else if(pieceType == "1pawn") {
           this.board[boardIdx] = new Piece({type: PieceType.P2_PAWN, healthPoints: healthPoints, squareIndex: boardIdx});
-          if(p2Pieces[constants.PAWN_1_PIECE_INDEX].healthPoints <= 0) {
-            p2Pieces[constants.PAWN_1_PIECE_INDEX] = this.board[boardIdx];
-          } else if(p2Pieces[constants.PAWN_2_PIECE_INDEX].healthPoints <= 0) {
-            p2Pieces[constants.PAWN_2_PIECE_INDEX] = this.board[boardIdx];
-          } else if(p2Pieces[constants.PAWN_3_PIECE_INDEX].healthPoints <= 0) {
-            p2Pieces[constants.PAWN_3_PIECE_INDEX] = this.board[boardIdx];
-          } else {
-            throw "Already found 3 living PLAYER_2 Pawns";
-          }
+          p2Pieces.push(this.board[boardIdx]);
         } else if(pieceType == "1mage") {
           this.board[boardIdx] = new Piece({type: PieceType.P2_MAGE, healthPoints: healthPoints, squareIndex: boardIdx});
-          p2Pieces[constants.MAGE_PIECE_INDEX] = this.board[boardIdx];
+          p2Pieces.push(this.board[boardIdx]);
         } else if(pieceType == "1assassin") {
           this.board[boardIdx] = new Piece({type: PieceType.P2_ASSASSIN, healthPoints: healthPoints, squareIndex: boardIdx});
-          p2Pieces[constants.ASSASSIN_PIECE_INDEX] = this.board[boardIdx];
+          p2Pieces.push(this.board[boardIdx]);
+        } else if(pieceType == "1knight") {
+          this.board[boardIdx] = new Piece({type: PieceType.P2_KNIGHT, healthPoints: healthPoints, squareIndex: boardIdx});
+          p2Pieces.push(this.board[boardIdx]);
         } else if(pieceType == "1warrior") {
           this.board[boardIdx] = new Piece({type: PieceType.P2_WARRIOR, healthPoints: healthPoints, squareIndex: boardIdx});
-          p2Pieces[constants.WARRIOR_PIECE_INDEX] = this.board[boardIdx];
+          p2Pieces.push(this.board[boardIdx]);
         }
       }
       boardIdx += 1;
@@ -2519,6 +1823,9 @@ export class Game {
           case PieceType.P1_ASSASSIN:
             retval += "0-assassin-";
             break;
+          case PieceType.P1_KNIGHT:
+            retval += "0-knight-";
+            break;
           case PieceType.P2_KING:
             retval += "1-king-";
             break;
@@ -2533,6 +1840,9 @@ export class Game {
             break;
           case PieceType.P2_ASSASSIN:
             retval += "1-assassin-";
+            break;
+          case PieceType.P2_KNIGHT:
+            retval += "1-knight-";
             break;
         }
         retval += currentPiece.healthPoints + ",";
@@ -2553,6 +1863,10 @@ export class Game {
     }
     return retval;
   }
+
+  getMoveNumber(): number {
+    return this.moveNumber;
+  }
 }
 
 export function coordinatesToBoardIndex(column: number, row: number): number {
@@ -2561,7 +1875,7 @@ export function coordinatesToBoardIndex(column: number, row: number): number {
 
 export function perft(game: Game, depth: number): number {
   let nodes = 0
-  let legalActions: Array<PlayerAction> = game.usefulLegalActions()
+  let legalActions: Array<PlayerAction> = game.generateLegalActions()
   if(depth == 1) {
     return legalActions.length
   }
@@ -2569,25 +1883,18 @@ export function perft(game: Game, depth: number): number {
   let ui: UndoInfo
   for(let i = 0; i < legalActions.length; i++) {
     pa = legalActions[i]
-    ui = game.makeAction(pa.moveSrcIdx, pa.moveDstIdx, pa.abilitySrcIdx, pa.abilityDstIdx)
+    ui = game.makeAction(pa)
     nodes += perft(game, depth - 1)
     game.undoAction(ui)
   }
   return nodes
 }
 
-function isActionValid(moveSrcIdx: number, moveDstIdx: number, abilitySrcIdx: number, abilityDstIdx: number): boolean {
-  let moveValid = false
-  let abilityValid = false
-  if(moveSrcIdx === constants.MOVE_SKIP && moveDstIdx === constants.MOVE_SKIP) {
-    moveValid = true
-  } else if((!isSquareIndexOffBoard(moveSrcIdx)) && (!isSquareIndexOffBoard(moveDstIdx))) {
-    moveValid = true
+export function isActionValid(srcIdx: number, dstIdx: number): boolean {
+  if(srcIdx === constants.ACTION_SKIP && dstIdx === constants.ACTION_SKIP) {
+    return true;
+  } else if((!isSquareIndexOffBoard(srcIdx)) && (!isSquareIndexOffBoard(dstIdx))) {
+    return true;
   }
-  if(abilitySrcIdx === constants.ABILITY_SKIP && abilityDstIdx === constants.ABILITY_SKIP) {
-    abilityValid = true
-  } else if((!isSquareIndexOffBoard(abilitySrcIdx)) && (!isSquareIndexOffBoard(abilityDstIdx))) {
-    abilityValid = true
-  }
-  return moveValid && abilityValid
+  return false;
 }

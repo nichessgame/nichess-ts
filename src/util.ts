@@ -1,5 +1,6 @@
 import * as constants from './constants'
-import { PieceType, Player, PlayerMove, PlayerAbility, coordinatesToBoardIndex } from './nichess'
+import { Direction } from './constants'
+import { PieceType, Player, PlayerAction, coordinatesToBoardIndex, ActionType } from './nichess'
 
 export function playerToString(p: Player): string {
   switch(p) {
@@ -24,6 +25,8 @@ export function pieceTypeToString(pt: PieceType): string {
       return "W"
     case PieceType.P1_ASSASSIN:
       return "A"
+    case PieceType.P1_KNIGHT:
+      return "N"
     case PieceType.P2_KING:
       return "k"
     case PieceType.P2_MAGE:
@@ -34,6 +37,8 @@ export function pieceTypeToString(pt: PieceType): string {
       return "w"
     case PieceType.P2_ASSASSIN:
       return "a"
+    case PieceType.P2_KNIGHT:
+      return "n"
     case PieceType.NO_PIECE:
       return "."
     default:
@@ -53,6 +58,8 @@ export function player1OrEmpty(pt: PieceType): boolean {
       return true
     case PieceType.P1_ASSASSIN:
       return true
+    case PieceType.P1_KNIGHT:
+      return true
     case PieceType.P2_KING:
       return false
     case PieceType.P2_MAGE:
@@ -62,6 +69,8 @@ export function player1OrEmpty(pt: PieceType): boolean {
     case PieceType.P2_WARRIOR:
       return false
     case PieceType.P2_ASSASSIN:
+      return false
+    case PieceType.P2_KNIGHT:
       return false
     case PieceType.NO_PIECE:
       return true
@@ -82,6 +91,8 @@ export function player2OrEmpty(pt: PieceType): boolean {
       return false
     case PieceType.P1_ASSASSIN:
       return false
+    case PieceType.P1_KNIGHT:
+      return false
     case PieceType.P2_KING:
       return true
     case PieceType.P2_MAGE:
@@ -91,6 +102,8 @@ export function player2OrEmpty(pt: PieceType): boolean {
     case PieceType.P2_WARRIOR:
       return true
     case PieceType.P2_ASSASSIN:
+      return true
+    case PieceType.P2_KNIGHT:
       return true
     case PieceType.NO_PIECE:
       return true
@@ -111,6 +124,8 @@ export function pieceBelongsToPlayer(pt: PieceType, player: Player): boolean {
       return player === Player.PLAYER_1
     case PieceType.P1_ASSASSIN:
       return player === Player.PLAYER_1
+    case PieceType.P1_KNIGHT:
+      return player === Player.PLAYER_1
     case PieceType.P2_KING:
       return player === Player.PLAYER_2
     case PieceType.P2_MAGE:
@@ -120,6 +135,8 @@ export function pieceBelongsToPlayer(pt: PieceType, player: Player): boolean {
     case PieceType.P2_WARRIOR:
       return player === Player.PLAYER_2
     case PieceType.P2_ASSASSIN:
+      return player === Player.PLAYER_2
+    case PieceType.P2_KNIGHT:
       return player === Player.PLAYER_2
     case PieceType.NO_PIECE:
       return false
@@ -142,538 +159,51 @@ export function isSquareIndexOffBoard(squareIndex: number): boolean {
     return false
 }
 
-/*
- * For each Piece type, for each square, generates legal moves as if there were no other
- * pieces on the board. Elsewhere, occupied squares will be discarded from the legal moves.
- */
-export function generateLegalMovesOnAnEmptyBoard(): Array<Array<Array<PlayerMove>>> {
-  let pieceTypeToSquareToLegalMoves = new Array<Array<Array<PlayerMove>>>(constants.NUM_PIECE_TYPE)
-
-  // p1 king moves
-  let squareToP1KingMoves = new Array<Array<PlayerMove>>(constants.NUM_SQUARES)
-  for(let move_row = 0; move_row < constants.NUM_ROWS; move_row++) {
-    for(let move_column = 0; move_column < constants.NUM_COLUMNS; move_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(move_column, move_row);
-      let playerMoves = new Array<PlayerMove>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let move_dst_x = move_column + dx;
-          let move_dst_y = move_row + dy;
-          if(isOffBoard(move_dst_x, move_dst_y)) continue;
-          let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-          playerMoves.push(pm);
+export function generateSquareToNeighboringDiagonalSquares(): Array<Array<number>> {
+  let squareToNeighboringDiagonalSquares = new Array<Array<number>>(constants.NUM_SQUARES)
+  for(let srcY = 0; srcY < constants.NUM_ROWS; srcY++) {
+    for(let srcX = 0; srcX < constants.NUM_COLUMNS; srcX++) {
+      let neighboringDiagonalSquares = new Array<number>()
+      let srcIndex = coordinatesToBoardIndex(srcX, srcY);
+      for(let k = -1; k < 2; k++) {
+        for(let l = -1; l < 2; l++) {
+          if(k == 0 || l == 0) continue;
+          let newX = srcX + k;
+          let newY = srcY + l;
+          if(isOffBoard(newX, newY)) continue;
+          let newIndex = coordinatesToBoardIndex(newX, newY);
+          neighboringDiagonalSquares.push(newIndex);
         }
       }
-      squareToP1KingMoves[srcSquareIndex] = playerMoves;
+      squareToNeighboringDiagonalSquares[srcIndex] = neighboringDiagonalSquares;  
     }
   }
-  pieceTypeToSquareToLegalMoves[PieceType.P1_KING] = squareToP1KingMoves;
-
-  // p1 mage moves
-  let squareToP1MageMoves = new Array<Array<PlayerMove>>(constants.NUM_SQUARES)
-  for(let move_row = 0; move_row < constants.NUM_ROWS; move_row++) {
-    for(let move_column = 0; move_column < constants.NUM_COLUMNS; move_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(move_column, move_row);
-      let playerMoves = new Array<PlayerMove>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let move_dst_x = move_column + dx;
-          let move_dst_y = move_row + dy;
-          if(isOffBoard(move_dst_x, move_dst_y)) continue;
-          let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-          playerMoves.push(pm);
-        }
-      }
-      squareToP1MageMoves[srcSquareIndex] = playerMoves;
-    }
-  }
-  pieceTypeToSquareToLegalMoves[PieceType.P1_MAGE] = squareToP1MageMoves;
-
-  // p1 pawn moves
-  let squareToP1PawnMoves = new Array<Array<PlayerMove>>(constants.NUM_SQUARES)
-  for(let move_row = 0; move_row < constants.NUM_ROWS; move_row++) {
-    for(let move_column = 0; move_column < constants.NUM_COLUMNS; move_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(move_column, move_row);
-      let playerMoves = new Array<PlayerMove>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let move_dst_x = move_column + dx;
-          let move_dst_y = move_row + dy;
-          if(isOffBoard(move_dst_x, move_dst_y)) continue;
-          let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-          playerMoves.push(pm);
-        }
-      }
-      // pawn can also go 2 squares forward
-      let move_dst_x = move_column;
-      let move_dst_y = move_row + 2;
-      if(!isOffBoard(move_dst_x, move_dst_y)){
-        let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-        playerMoves.push(pm);
-      }
-      squareToP1PawnMoves[srcSquareIndex] = playerMoves;
-    }
-  }
-  pieceTypeToSquareToLegalMoves[PieceType.P1_PAWN] = squareToP1PawnMoves;
-
-  // p1 warrior moves
-  let squareToP1WarriorMoves = new Array<Array<PlayerMove>>(constants.NUM_SQUARES)
-  for(let move_row = 0; move_row < constants.NUM_ROWS; move_row++) {
-    for(let move_column = 0; move_column < constants.NUM_COLUMNS; move_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(move_column, move_row);
-      let playerMoves = new Array<PlayerMove>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let move_dst_x = move_column + dx;
-          let move_dst_y = move_row + dy;
-          if(isOffBoard(move_dst_x, move_dst_y)) continue;
-          let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-          playerMoves.push(pm);
-        }
-      }
-      squareToP1WarriorMoves[srcSquareIndex] = playerMoves;
-    }
-  }
-  pieceTypeToSquareToLegalMoves[PieceType.P1_WARRIOR] = squareToP1WarriorMoves;
-
-  // p1 assassin moves
-  let squareToP1AssassinMoves = new Array<Array<PlayerMove>>(constants.NUM_SQUARES)
-  for(let move_row = 0; move_row < constants.NUM_ROWS; move_row++) {
-    for(let move_column = 0; move_column < constants.NUM_COLUMNS; move_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(move_column, move_row);
-      let playerMoves = new Array<PlayerMove>();
-      for(let dx = -2; dx < 3; dx++) {
-        for(let dy = -2; dy < 3; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let move_dst_x = move_column + dx;
-          let move_dst_y = move_row + dy;
-          if(isOffBoard(move_dst_x, move_dst_y)) continue;
-          let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-          playerMoves.push(pm);
-        }
-      }
-      // 4 extra moves:
-      let move_dst_x1 = move_column + 3;
-      let move_dst_y1 = move_row + 3;
-      let move_dst_x2 = move_column + 3;
-      let move_dst_y2 = move_row - 3;
-      let move_dst_x3 = move_column - 3;
-      let move_dst_y3 = move_row + 3;
-      let move_dst_x4 = move_column - 3;
-      let move_dst_y4 = move_row - 3;
-      if(!isOffBoard(move_dst_x1, move_dst_y1)){
-        let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x1, move_dst_y1));
-        playerMoves.push(pm);
-      }
-      if(!isOffBoard(move_dst_x2, move_dst_y2)){
-        let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x2, move_dst_y2));
-        playerMoves.push(pm);
-      }
-      if(!isOffBoard(move_dst_x3, move_dst_y3)){
-        let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x3, move_dst_y3));
-        playerMoves.push(pm);
-      }
-      if(!isOffBoard(move_dst_x4, move_dst_y4)){
-        let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x4, move_dst_y4));
-        playerMoves.push(pm);
-      }
-
-      squareToP1AssassinMoves[srcSquareIndex] = playerMoves;
-    }
-  }
-  pieceTypeToSquareToLegalMoves[PieceType.P1_ASSASSIN] = squareToP1AssassinMoves;
-
-  // p2 king moves
-  let squareToP2KingMoves = new Array<Array<PlayerMove>>(constants.NUM_SQUARES)
-  for(let move_row = 0; move_row < constants.NUM_ROWS; move_row++) {
-    for(let move_column = 0; move_column < constants.NUM_COLUMNS; move_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(move_column, move_row);
-      let playerMoves = new Array<PlayerMove>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let move_dst_x = move_column + dx;
-          let move_dst_y = move_row + dy;
-          if(isOffBoard(move_dst_x, move_dst_y)) continue;
-          let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-          playerMoves.push(pm);
-        }
-      }
-      squareToP2KingMoves[srcSquareIndex] = playerMoves;
-    }
-  }
-  pieceTypeToSquareToLegalMoves[PieceType.P2_KING] = squareToP2KingMoves;
-
-  // p2 mage moves
-  let squareToP2MageMoves = new Array<Array<PlayerMove>>(constants.NUM_SQUARES)
-  for(let move_row = 0; move_row < constants.NUM_ROWS; move_row++) {
-    for(let move_column = 0; move_column < constants.NUM_COLUMNS; move_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(move_column, move_row);
-      let playerMoves = new Array<PlayerMove>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let move_dst_x = move_column + dx;
-          let move_dst_y = move_row + dy;
-          if(isOffBoard(move_dst_x, move_dst_y)) continue;
-          let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-          playerMoves.push(pm);
-        }
-      }
-      squareToP2MageMoves[srcSquareIndex] = playerMoves;
-    }
-  }
-  pieceTypeToSquareToLegalMoves[PieceType.P2_MAGE] = squareToP2MageMoves;
-
-  // p2 pawn moves
-  let squareToP2PawnMoves = new Array<Array<PlayerMove>>(constants.NUM_SQUARES)
-  for(let move_row = 0; move_row < constants.NUM_ROWS; move_row++) {
-    for(let move_column = 0; move_column < constants.NUM_COLUMNS; move_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(move_column, move_row);
-      let playerMoves = new Array<PlayerMove>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let move_dst_x = move_column + dx;
-          let move_dst_y = move_row + dy;
-          if(isOffBoard(move_dst_x, move_dst_y)) continue;
-          let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-          playerMoves.push(pm);
-        }
-      }
-      // pawn can also go 2 squares forward(for p2 this means -2 on y axis)
-      let move_dst_x = move_column;
-      let move_dst_y = move_row - 2;
-      if(!isOffBoard(move_dst_x, move_dst_y)){
-        let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-        playerMoves.push(pm);
-      }
-      squareToP2PawnMoves[srcSquareIndex] = playerMoves;
-    }
-  }
-  pieceTypeToSquareToLegalMoves[PieceType.P2_PAWN] = squareToP2PawnMoves;
-
-  // p2 warrior moves
-  let squareToP2WarriorMoves = new Array<Array<PlayerMove>>(constants.NUM_SQUARES)
-  for(let move_row = 0; move_row < constants.NUM_ROWS; move_row++) {
-    for(let move_column = 0; move_column < constants.NUM_COLUMNS; move_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(move_column, move_row);
-      let playerMoves = new Array<PlayerMove>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let move_dst_x = move_column + dx;
-          let move_dst_y = move_row + dy;
-          if(isOffBoard(move_dst_x, move_dst_y)) continue;
-          let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-          playerMoves.push(pm);
-        }
-      }
-      squareToP2WarriorMoves[srcSquareIndex] = playerMoves;
-    }
-  }
-  pieceTypeToSquareToLegalMoves[PieceType.P2_WARRIOR] = squareToP2WarriorMoves;
-
-  // p2 assassin moves
-  let squareToP2AssassinMoves = new Array<Array<PlayerMove>>(constants.NUM_SQUARES)
-  for(let move_row = 0; move_row < constants.NUM_ROWS; move_row++) {
-    for(let move_column = 0; move_column < constants.NUM_COLUMNS; move_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(move_column, move_row);
-      let playerMoves = new Array<PlayerMove>()
-      for(let dx = -2; dx < 3; dx++) {
-        for(let dy = -2; dy < 3; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let move_dst_x = move_column + dx;
-          let move_dst_y = move_row + dy;
-          if(isOffBoard(move_dst_x, move_dst_y)) continue;
-          let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x, move_dst_y));
-          playerMoves.push(pm);
-        }
-      }
-      // 4 extra moves:
-      let move_dst_x1 = move_column + 3;
-      let move_dst_y1 = move_row + 3;
-      let move_dst_x2 = move_column + 3;
-      let move_dst_y2 = move_row - 3;
-      let move_dst_x3 = move_column - 3;
-      let move_dst_y3 = move_row + 3;
-      let move_dst_x4 = move_column - 3;
-      let move_dst_y4 = move_row - 3;
-      if(!isOffBoard(move_dst_x1, move_dst_y1)){
-        let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x1, move_dst_y1));
-        playerMoves.push(pm);
-      }
-      if(!isOffBoard(move_dst_x2, move_dst_y2)){
-        let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x2, move_dst_y2));
-        playerMoves.push(pm);
-      }
-      if(!isOffBoard(move_dst_x3, move_dst_y3)){
-        let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x3, move_dst_y3));
-        playerMoves.push(pm);
-      }
-      if(!isOffBoard(move_dst_x4, move_dst_y4)){
-        let pm = new PlayerMove(srcSquareIndex, coordinatesToBoardIndex(move_dst_x4, move_dst_y4));
-        playerMoves.push(pm);
-      }
-
-      squareToP2AssassinMoves[srcSquareIndex] = playerMoves;
-    }
-  }
-  pieceTypeToSquareToLegalMoves[PieceType.P2_ASSASSIN] = squareToP2AssassinMoves;
-
-  // NO_PIECE moves (shouldn't be used, added for completeness)
-  let squareToNoPieceMoves = new Array<Array<PlayerMove>>(constants.NUM_SQUARES)
-  for(let move_row = 0; move_row < constants.NUM_ROWS; move_row++) {
-    for(let move_column = 0; move_column < constants.NUM_COLUMNS; move_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(move_column, move_row);
-      let playerMoves = new Array<PlayerMove>()
-      squareToNoPieceMoves[srcSquareIndex] = playerMoves;
-    }
-  }
-  pieceTypeToSquareToLegalMoves[PieceType.NO_PIECE] = squareToNoPieceMoves;
-
-  return pieceTypeToSquareToLegalMoves;
+  return squareToNeighboringDiagonalSquares;
 }
 
-/*
- * For each Piece type, for each square, generates legal abilities as if there were no other
- * pieces on the board. Elsewhere, abilities will be filtered by the actual board position.
- */
-export function generateLegalAbilitiesOnAnEmptyBoard(): Array<Array<Array<PlayerAbility>>> {
-  let pieceTypeToSquareToLegalAbilities = new Array<Array<Array<PlayerAbility>>>(constants.NUM_PIECE_TYPE)
-
-  // p1 king abilities
-  let squareToP1KingAbilities = new Array<Array<PlayerAbility>>(constants.NUM_SQUARES)
-  for(let ability_row = 0; ability_row < constants.NUM_ROWS; ability_row++) {
-    for(let ability_column = 0; ability_column < constants.NUM_COLUMNS; ability_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(ability_column, ability_row);
-      let playerAbilities = new Array<PlayerAbility>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let ability_dst_x = ability_column + dx;
-          let ability_dst_y = ability_row + dy;
-          if(isOffBoard(ability_dst_x, ability_dst_y)) continue;
-          let pa = new PlayerAbility(srcSquareIndex, coordinatesToBoardIndex(ability_dst_x, ability_dst_y));
-          playerAbilities.push(pa);
+export function generateSquareToNeighboringNonDiagonalSquares(): Array<Array<number>> {
+  let squareToNeighboringNonDiagonalSquares = new Array<Array<number>>(constants.NUM_SQUARES)
+  for(let srcY = 0; srcY < constants.NUM_ROWS; srcY++) {
+    for(let srcX = 0; srcX < constants.NUM_COLUMNS; srcX++) {
+      let neighboringNonDiagonalSquares = new Array<number>()
+      let srcIndex = coordinatesToBoardIndex(srcX, srcY);
+      for(let k = -1; k < 2; k++) {
+        for(let l = -1; l < 2; l++) {
+          if(k == 0 && l == 0) continue;
+          if(Math.abs(k) == 1 && Math.abs(l) == 1) continue;
+          let newX = srcX + k;
+          let newY = srcY + l;
+          if(isOffBoard(newX, newY)) continue;
+          let newIndex = coordinatesToBoardIndex(newX, newY);
+          neighboringNonDiagonalSquares.push(newIndex);
         }
       }
-      squareToP1KingAbilities[srcSquareIndex] = playerAbilities;
+      squareToNeighboringNonDiagonalSquares[srcIndex] = neighboringNonDiagonalSquares;  
     }
   }
-  pieceTypeToSquareToLegalAbilities[PieceType.P1_KING] = squareToP1KingAbilities;
-
-  // p1 mage abilities
-  let squareToP1MageAbilities = new Array<Array<PlayerAbility>>(constants.NUM_SQUARES)
-  for(let ability_row = 0; ability_row < constants.NUM_ROWS; ability_row++) {
-    for(let ability_column = 0; ability_column < constants.NUM_COLUMNS; ability_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(ability_column, ability_row);
-      let playerAbilities = new Array<PlayerAbility>()
-      for(let dx = -2; dx < 3; dx++) {
-        for(let dy = -2; dy < 3; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let ability_dst_x = ability_column + dx;
-          let ability_dst_y = ability_row + dy;
-          if(isOffBoard(ability_dst_x, ability_dst_y)) continue;
-          let pa = new PlayerAbility(srcSquareIndex, coordinatesToBoardIndex(ability_dst_x, ability_dst_y));
-          playerAbilities.push(pa);
-        }
-      }
-      squareToP1MageAbilities[srcSquareIndex] = playerAbilities;
-    }
-  }
-  pieceTypeToSquareToLegalAbilities[PieceType.P1_MAGE] = squareToP1MageAbilities;
-
-  // p1 pawn abilities
-  let squareToP1PawnAbilities = new Array<Array<PlayerAbility>>(constants.NUM_SQUARES)
-  for(let ability_row = 0; ability_row < constants.NUM_ROWS; ability_row++) {
-    for(let ability_column = 0; ability_column < constants.NUM_COLUMNS; ability_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(ability_column, ability_row);
-      let playerAbilities = new Array<PlayerAbility>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let ability_dst_x = ability_column + dx;
-          let ability_dst_y = ability_row + dy;
-          if(isOffBoard(ability_dst_x, ability_dst_y)) continue;
-          let pa = new PlayerAbility(srcSquareIndex, coordinatesToBoardIndex(ability_dst_x, ability_dst_y));
-          playerAbilities.push(pa);
-        }
-      }
-      squareToP1PawnAbilities[srcSquareIndex] = playerAbilities;
-    }
-  }
-  pieceTypeToSquareToLegalAbilities[PieceType.P1_PAWN] = squareToP1PawnAbilities;
-
-  // p1 warrior abilities
-  let squareToP1WarriorAbilities = new Array<Array<PlayerAbility>>(constants.NUM_SQUARES)
-  for(let ability_row = 0; ability_row < constants.NUM_ROWS; ability_row++) {
-    for(let ability_column = 0; ability_column < constants.NUM_COLUMNS; ability_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(ability_column, ability_row);
-      let playerAbilities = new Array<PlayerAbility>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let ability_dst_x = ability_column + dx;
-          let ability_dst_y = ability_row + dy;
-          if(isOffBoard(ability_dst_x, ability_dst_y)) continue;
-          let pa = new PlayerAbility(srcSquareIndex, coordinatesToBoardIndex(ability_dst_x, ability_dst_y));
-          playerAbilities.push(pa);
-        }
-      }
-      squareToP1WarriorAbilities[srcSquareIndex] = playerAbilities;
-    }
-  }
-  pieceTypeToSquareToLegalAbilities[PieceType.P1_WARRIOR] = squareToP1WarriorAbilities;
-
-  // p1 assassin abilities
-  let squareToP1AssassinAbilities = new Array<Array<PlayerAbility>>(constants.NUM_SQUARES)
-  for(let ability_row = 0; ability_row < constants.NUM_ROWS; ability_row++) {
-    for(let ability_column = 0; ability_column < constants.NUM_COLUMNS; ability_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(ability_column, ability_row);
-      let playerAbilities = new Array<PlayerAbility>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let ability_dst_x = ability_column + dx;
-          let ability_dst_y = ability_row + dy;
-          if(isOffBoard(ability_dst_x, ability_dst_y)) continue;
-          let pa = new PlayerAbility(srcSquareIndex, coordinatesToBoardIndex(ability_dst_x, ability_dst_y));
-          playerAbilities.push(pa);
-        }
-      }
-      squareToP1AssassinAbilities[srcSquareIndex] = playerAbilities;
-    }
-  }
-  pieceTypeToSquareToLegalAbilities[PieceType.P1_ASSASSIN] = squareToP1AssassinAbilities;
-
-  // p2 king abilities
-  let squareToP2KingAbilities = new Array<Array<PlayerAbility>>(constants.NUM_SQUARES)
-  for(let ability_row = 0; ability_row < constants.NUM_ROWS; ability_row++) {
-    for(let ability_column = 0; ability_column < constants.NUM_COLUMNS; ability_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(ability_column, ability_row);
-      let playerAbilities = new Array<PlayerAbility>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let ability_dst_x = ability_column + dx;
-          let ability_dst_y = ability_row + dy;
-          if(isOffBoard(ability_dst_x, ability_dst_y)) continue;
-          let pa = new PlayerAbility(srcSquareIndex, coordinatesToBoardIndex(ability_dst_x, ability_dst_y));
-          playerAbilities.push(pa);
-        }
-      }
-      squareToP2KingAbilities[srcSquareIndex] = playerAbilities;
-    }
-  }
-  pieceTypeToSquareToLegalAbilities[PieceType.P2_KING] = squareToP2KingAbilities;
-
-  // p2 mage abilities
-  let squareToP2MageAbilities = new Array<Array<PlayerAbility>>(constants.NUM_SQUARES)
-  for(let ability_row = 0; ability_row < constants.NUM_ROWS; ability_row++) {
-    for(let ability_column = 0; ability_column < constants.NUM_COLUMNS; ability_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(ability_column, ability_row);
-      let playerAbilities = new Array<PlayerAbility>()
-      for(let dx = -2; dx < 3; dx++) {
-        for(let dy = -2; dy < 3; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let ability_dst_x = ability_column + dx;
-          let ability_dst_y = ability_row + dy;
-          if(isOffBoard(ability_dst_x, ability_dst_y)) continue;
-          let pa = new PlayerAbility(srcSquareIndex, coordinatesToBoardIndex(ability_dst_x, ability_dst_y));
-          playerAbilities.push(pa);
-        }
-      }
-      squareToP2MageAbilities[srcSquareIndex] = playerAbilities;
-    }
-  }
-  pieceTypeToSquareToLegalAbilities[PieceType.P2_MAGE] = squareToP2MageAbilities;
-
-  // p2 pawn abilities
-  let squareToP2PawnAbilities = new Array<Array<PlayerAbility>>(constants.NUM_SQUARES)
-  for(let ability_row = 0; ability_row < constants.NUM_ROWS; ability_row++) {
-    for(let ability_column = 0; ability_column < constants.NUM_COLUMNS; ability_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(ability_column, ability_row);
-      let playerAbilities = new Array<PlayerAbility>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let ability_dst_x = ability_column + dx;
-          let ability_dst_y = ability_row + dy;
-          if(isOffBoard(ability_dst_x, ability_dst_y)) continue;
-          let pa = new PlayerAbility(srcSquareIndex, coordinatesToBoardIndex(ability_dst_x, ability_dst_y));
-          playerAbilities.push(pa);
-        }
-      }
-      squareToP2PawnAbilities[srcSquareIndex] = playerAbilities;
-    }
-  }
-  pieceTypeToSquareToLegalAbilities[PieceType.P2_PAWN] = squareToP2PawnAbilities;
-
-  // p2 warrior abilities
-  let squareToP2WarriorAbilities = new Array<Array<PlayerAbility>>(constants.NUM_SQUARES)
-  for(let ability_row = 0; ability_row < constants.NUM_ROWS; ability_row++) {
-    for(let ability_column = 0; ability_column < constants.NUM_COLUMNS; ability_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(ability_column, ability_row);
-      let playerAbilities = new Array<PlayerAbility>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let ability_dst_x = ability_column + dx;
-          let ability_dst_y = ability_row + dy;
-          if(isOffBoard(ability_dst_x, ability_dst_y)) continue;
-          let pa = new PlayerAbility(srcSquareIndex, coordinatesToBoardIndex(ability_dst_x, ability_dst_y));
-          playerAbilities.push(pa);
-        }
-      }
-      squareToP2WarriorAbilities[srcSquareIndex] = playerAbilities;
-    }
-  }
-  pieceTypeToSquareToLegalAbilities[PieceType.P2_WARRIOR] = squareToP2WarriorAbilities;
-
-  // p2 assassin abilities
-  let squareToP2AssassinAbilities = new Array<Array<PlayerAbility>>(constants.NUM_SQUARES)
-  for(let ability_row = 0; ability_row < constants.NUM_ROWS; ability_row++) {
-    for(let ability_column = 0; ability_column < constants.NUM_COLUMNS; ability_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(ability_column, ability_row);
-      let playerAbilities = new Array<PlayerAbility>()
-      for(let dx = -1; dx < 2; dx++) {
-        for(let dy = -1; dy < 2; dy++) {
-          if(dx == 0 && dy == 0) continue;
-          let ability_dst_x = ability_column + dx;
-          let ability_dst_y = ability_row + dy;
-          if(isOffBoard(ability_dst_x, ability_dst_y)) continue;
-          let pa = new PlayerAbility(srcSquareIndex, coordinatesToBoardIndex(ability_dst_x, ability_dst_y));
-          playerAbilities.push(pa);
-        }
-      }
-      squareToP2AssassinAbilities[srcSquareIndex] = playerAbilities;
-    }
-  }
-  pieceTypeToSquareToLegalAbilities[PieceType.P2_ASSASSIN] = squareToP2AssassinAbilities;
-
-  // NO_PIECE abilities
-  let squareToNoPieceAbilities = new Array<Array<PlayerAbility>>(constants.NUM_SQUARES)
-  for(let ability_row = 0; ability_row < constants.NUM_ROWS; ability_row++) {
-    for(let ability_column = 0; ability_column < constants.NUM_COLUMNS; ability_column++) {
-      let srcSquareIndex = coordinatesToBoardIndex(ability_column, ability_row);
-      let playerAbilities = new Array<PlayerAbility>()
-      squareToNoPieceAbilities[srcSquareIndex] = playerAbilities;
-    }
-  }
-  pieceTypeToSquareToLegalAbilities[PieceType.NO_PIECE] = squareToNoPieceAbilities;
-
-  return pieceTypeToSquareToLegalAbilities;
+  return squareToNeighboringNonDiagonalSquares;
 }
 
-/*
- * For index of each square, generates indices of squares that are touching it.
- * Used for mage ability.
- */
 export function generateSquareToNeighboringSquares(): Array<Array<number>> {
   let squareToNeighboringSquares = new Array<Array<number>>(constants.NUM_SQUARES)
   for(let srcY = 0; srcY < constants.NUM_ROWS; srcY++) {
@@ -694,4 +224,300 @@ export function generateSquareToNeighboringSquares(): Array<Array<number>> {
     }
   }
   return squareToNeighboringSquares;
+}
+
+export function generateSquareToDirectionToLine(): Array<Array<Array<number>>> {
+  let squareToDirectionToLine = new Array<Array<Array<number>>>(constants.NUM_SQUARES)
+  for(let srcY = 0; srcY < constants.NUM_ROWS; srcY++) {
+    for(let srcX = 0; srcX < constants.NUM_COLUMNS; srcX++) {
+      let squareIndex = coordinatesToBoardIndex(srcX, srcY);
+      let directionToLine = new Array<Array<number>>(constants.NUM_DIRECTIONS);
+
+      let north = new Array<number>();
+      for(let d = 1; d < constants.NUM_ROWS; d++) {
+        let newX = srcX;
+        let newY = srcY + d;
+        if(isOffBoard(newX, newY)) break;
+        let newIndex = coordinatesToBoardIndex(newX, newY);
+        north.push(newIndex);
+      }
+
+      let northeast = new Array<number>();
+      for(let d = 1; d < constants.NUM_COLUMNS; d++) {
+        let newX = srcX + d;
+        let newY = srcY + d;
+        if(isOffBoard(newX, newY)) break;
+        let newIndex = coordinatesToBoardIndex(newX, newY);
+        northeast.push(newIndex);
+      }
+
+      let east = new Array<number>();
+      for(let d = 1; d < constants.NUM_COLUMNS; d++) {
+        let newX = srcX + d;
+        let newY = srcY;
+        if(isOffBoard(newX, newY)) break;
+        let newIndex = coordinatesToBoardIndex(newX, newY);
+        east.push(newIndex);
+      }
+
+      let southeast = new Array<number>();
+      for(let d = 1; d < constants.NUM_COLUMNS; d++) {
+        let newX = srcX + d;
+        let newY = srcY - d;
+        if(isOffBoard(newX, newY)) break;
+        let newIndex = coordinatesToBoardIndex(newX, newY);
+        southeast.push(newIndex);
+      }
+
+      let south = new Array<number>();
+      for(let d = 1; d < constants.NUM_ROWS; d++) {
+        let newX = srcX;
+        let newY = srcY - d;
+        if(isOffBoard(newX, newY)) break;
+        let newIndex = coordinatesToBoardIndex(newX, newY);
+        south.push(newIndex);
+      }
+
+      let southwest = new Array<number>();
+      for(let d = 1; d < constants.NUM_COLUMNS; d++) {
+        let newX = srcX - d;
+        let newY = srcY - d;
+        if(isOffBoard(newX, newY)) break;
+        let newIndex = coordinatesToBoardIndex(newX, newY);
+        southwest.push(newIndex);
+      }
+
+      let west = new Array<number>();
+      for(let d = 1; d < constants.NUM_COLUMNS; d++) {
+        let newX = srcX - d;
+        let newY = srcY;
+        if(isOffBoard(newX, newY)) break;
+        let newIndex = coordinatesToBoardIndex(newX, newY);
+        west.push(newIndex);
+      }
+
+      let northwest = new Array<number>();
+      for(let d = 1; d < constants.NUM_COLUMNS; d++) {
+        let newX = srcX - d;
+        let newY = srcY + d;
+        if(isOffBoard(newX, newY)) break;
+        let newIndex = coordinatesToBoardIndex(newX, newY);
+        northwest.push(newIndex);
+      }
+
+      let invalid = new Array<number>();
+
+      directionToLine[Direction.NORTH] = north;
+      directionToLine[Direction.NORTHEAST] = northeast;
+      directionToLine[Direction.EAST] = east;
+      directionToLine[Direction.SOUTHEAST] = southeast;
+      directionToLine[Direction.SOUTH] = south;
+      directionToLine[Direction.SOUTHWEST] = southwest;
+      directionToLine[Direction.WEST] = west;
+      directionToLine[Direction.NORTHWEST] = northwest;
+      directionToLine[Direction.INVALID] = invalid;
+
+      squareToDirectionToLine[squareIndex] = directionToLine;
+    }
+  }
+  return squareToDirectionToLine;
+}
+
+export function generateSrcSquareToDstSquareToDirection(): Array<Array<Direction>> {
+  let srcSquareToDstSquareToDirection = new Array<Array<Direction>>(constants.NUM_SQUARES)
+  for(let srcY = 0; srcY < constants.NUM_ROWS; srcY++) {
+    for(let srcX = 0; srcX < constants.NUM_COLUMNS; srcX++) {
+      let srcIndex = coordinatesToBoardIndex(srcX, srcY);
+      let dstSquareToDirection = new Array<Direction>(constants.NUM_SQUARES);
+      for(let dstY = 0; dstY < constants.NUM_ROWS; dstY++) {
+        for(let dstX = 0; dstX < constants.NUM_COLUMNS; dstX++) {
+          let dstIndex = coordinatesToBoardIndex(dstX, dstY);
+          let dx = dstX - srcX;
+          let dy = dstY - srcY;
+          if(dx == 0 && dy > 0) {
+            dstSquareToDirection[dstIndex] = Direction.NORTH;
+          } else if(dx == dy && dx > 0) {
+            dstSquareToDirection[dstIndex] = Direction.NORTHEAST;
+          } else if(dx > 0 && dy == 0) {
+            dstSquareToDirection[dstIndex] = Direction.EAST;
+          } else if(dx == (-dy) && dx > 0) {
+            dstSquareToDirection[dstIndex] = Direction.SOUTHEAST;
+          } else if(dx == 0 && dy < 0) {
+            dstSquareToDirection[dstIndex] = Direction.SOUTH;
+          } else if(dx == dy && dx < 0) {
+            dstSquareToDirection[dstIndex] = Direction.SOUTHWEST;
+          } else if(dx < 0 && dy == 0) {
+            dstSquareToDirection[dstIndex] = Direction.WEST;
+          } else if(dx == -(dy) && dx < 0) {
+            dstSquareToDirection[dstIndex] = Direction.NORTHWEST;
+          } else {
+            dstSquareToDirection[dstIndex] = Direction.INVALID;
+          }
+        }
+      }
+      srcSquareToDstSquareToDirection[srcIndex] = dstSquareToDirection;
+    }
+  }
+  return srcSquareToDstSquareToDirection;
+}
+
+export function generateSquareToP1PawnMoveSquares(): Array<Array<number>> {
+  let squareToP1PawnMoves = new Array<Array<number>>(constants.NUM_SQUARES)
+  for(let srcY = 0; srcY < constants.NUM_ROWS; srcY++) {
+    for(let srcX = 0; srcX < constants.NUM_COLUMNS; srcX++) {
+      let srcIndex = coordinatesToBoardIndex(srcX, srcY);
+      let p1PawnSquares = new Array<number>()
+      let newX = srcX;
+      let newY = srcY + 1;
+      if(!isOffBoard(newX, newY)) {
+        let newIndex = coordinatesToBoardIndex(newX, newY)
+        p1PawnSquares.push(newIndex);
+      }
+
+      if(srcY == 1) {
+        // p1 pawn can also go 2 squares north
+        newX = srcX;
+        newY = srcY + 2;
+        if(!isOffBoard(newX, newY)){
+          let newIndex = coordinatesToBoardIndex(newX, newY)
+          p1PawnSquares.push(newIndex);
+        }
+      }
+      squareToP1PawnMoves[srcIndex] = p1PawnSquares;
+    }
+  }
+  return squareToP1PawnMoves;
+}
+
+export function generateSquareToP2PawnMoveSquares(): Array<Array<number>> {
+  let squareToP2PawnMoves = new Array<Array<number>>(constants.NUM_SQUARES)
+  for(let srcY = 0; srcY < constants.NUM_ROWS; srcY++) {
+    for(let srcX = 0; srcX < constants.NUM_COLUMNS; srcX++) {
+      let srcIndex = coordinatesToBoardIndex(srcX, srcY);
+      let p2PawnSquares = new Array<number>()
+      let newX = srcX;
+      let newY = srcY - 1;
+      if(!isOffBoard(newX, newY)) {
+        let newIndex = coordinatesToBoardIndex(newX, newY)
+        p2PawnSquares.push(newIndex);
+      }
+
+      if(srcY == 6) {
+        // p2 pawn can also go 2 squares south
+        newX = srcX;
+        newY = srcY - 2;
+        if(!isOffBoard(newX, newY)){
+          let newIndex = coordinatesToBoardIndex(newX, newY)
+          p2PawnSquares.push(newIndex);
+        }
+      }
+      squareToP2PawnMoves[srcIndex] = p2PawnSquares;
+    }
+  }
+  return squareToP2PawnMoves;
+}
+
+export function generateSquareToP1PawnAbilitySquares(): Array<Array<number>> {
+  let squareToP1PawnAbilities = new Array<Array<number>>(constants.NUM_SQUARES)
+  for(let srcY = 0; srcY < constants.NUM_ROWS; srcY++) {
+    for(let srcX = 0; srcX < constants.NUM_COLUMNS; srcX++) {
+      let srcIndex = coordinatesToBoardIndex(srcX, srcY);
+      let p1PawnSquares = new Array<number>()
+      let newX = srcX - 1;
+      let newY = srcY + 1;
+      if(!isOffBoard(newX, newY)) {
+        let newIndex = coordinatesToBoardIndex(newX, newY)
+        p1PawnSquares.push(newIndex);
+      }
+      newX = srcX + 1;
+      newY = srcY + 1;
+      if(!isOffBoard(newX, newY)){
+        let newIndex = coordinatesToBoardIndex(newX, newY)
+        p1PawnSquares.push(newIndex);
+      }
+
+      squareToP1PawnAbilities[srcIndex] = p1PawnSquares;
+    }
+  }
+  return squareToP1PawnAbilities;
+}
+
+export function generateSquareToP2PawnAbilitySquares(): Array<Array<number>> {
+  let squareToP2PawnAbilities = new Array<Array<number>>(constants.NUM_SQUARES)
+  for(let srcY = 0; srcY < constants.NUM_ROWS; srcY++) {
+    for(let srcX = 0; srcX < constants.NUM_COLUMNS; srcX++) {
+      let srcIndex = coordinatesToBoardIndex(srcX, srcY);
+      let p2PawnSquares = new Array<number>()
+      let newX = srcX - 1;
+      let newY = srcY - 1;
+      if(!isOffBoard(newX, newY)) {
+        let newIndex = coordinatesToBoardIndex(newX, newY)
+        p2PawnSquares.push(newIndex);
+      }
+      newX = srcX + 1;
+      newY = srcY - 1;
+      if(!isOffBoard(newX, newY)){
+        let newIndex = coordinatesToBoardIndex(newX, newY)
+        p2PawnSquares.push(newIndex);
+      }
+
+      squareToP2PawnAbilities[srcIndex] = p2PawnSquares;
+    }
+  }
+  return squareToP2PawnAbilities;
+}
+
+export function generateSquareToKnightActionSquares(): Array<Array<number>> {
+  let squareToKnightSquares = new Array<Array<number>>(constants.NUM_SQUARES)
+  for(let row = 0; row < constants.NUM_ROWS; row++) {
+    for(let column = 0; column < constants.NUM_COLUMNS; column++) {
+      let srcSquareIndex = coordinatesToBoardIndex(column, row);
+      let squares = new Array<number>();
+
+      let move_dst_x1 = column + 2;
+      let move_dst_y1 = row + 1;
+      let move_dst_x2 = column + 2;
+      let move_dst_y2 = row - 1;
+      let move_dst_x3 = column + 1;
+      let move_dst_y3 = row - 2;
+      let move_dst_x4 = column - 1;
+      let move_dst_y4 = row - 2;
+      let move_dst_x5 = column - 2;
+      let move_dst_y5 = row - 1;
+      let move_dst_x6 = column - 2;
+      let move_dst_y6 = row + 1;
+      let move_dst_x7 = column - 1;
+      let move_dst_y7 = row + 2;
+      let move_dst_x8 = column + 1;
+      let move_dst_y8 = row + 2;
+
+      if(!isOffBoard(move_dst_x1, move_dst_y1)){
+        squares.push(coordinatesToBoardIndex(move_dst_x1, move_dst_y1));
+      }
+      if(!isOffBoard(move_dst_x2, move_dst_y2)){
+        squares.push(coordinatesToBoardIndex(move_dst_x2, move_dst_y2));
+      }
+      if(!isOffBoard(move_dst_x3, move_dst_y3)){
+        squares.push(coordinatesToBoardIndex(move_dst_x3, move_dst_y3));
+      }
+      if(!isOffBoard(move_dst_x4, move_dst_y4)){
+        squares.push(coordinatesToBoardIndex(move_dst_x4, move_dst_y4));
+      }
+      if(!isOffBoard(move_dst_x5, move_dst_y5)){
+        squares.push(coordinatesToBoardIndex(move_dst_x5, move_dst_y5));
+      }
+      if(!isOffBoard(move_dst_x6, move_dst_y6)){
+        squares.push(coordinatesToBoardIndex(move_dst_x6, move_dst_y6));
+      }
+      if(!isOffBoard(move_dst_x7, move_dst_y7)){
+        squares.push(coordinatesToBoardIndex(move_dst_x7, move_dst_y7));
+      }
+      if(!isOffBoard(move_dst_x8, move_dst_y8)){
+        squares.push(coordinatesToBoardIndex(move_dst_x8, move_dst_y8));
+      }
+
+      squareToKnightSquares[srcSquareIndex] = squares;
+    }
+  }
+  return squareToKnightSquares;
 }

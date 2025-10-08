@@ -1,3 +1,5 @@
 export * from './nichess'
+export * from './game_cache'
 export * from './constants'
 export * from './util'
+export * from './api'
