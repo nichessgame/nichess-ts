@@ -1718,7 +1718,15 @@ export class Game {
   }
 
   isGameOver(): boolean {
-    if(this.playerToKing[Player.PLAYER_1].healthPoints <= 0 || this.playerToKing[Player.PLAYER_2].healthPoints <= 0 || this.repetitionsDraw) {
+    if(this.playerToKing[Player.PLAYER_1].healthPoints <= 0 || this.playerToKing[Player.PLAYER_2].healthPoints <= 0 || this.repetitionsDraw || this.moveNumber >= 333) {
+      return true
+    } else {
+      return false
+    }
+  }
+
+  isGameDraw(): boolean {
+    if(this.repetitionsDraw || this.moveNumber >= 333) {
       return true
     } else {
       return false
