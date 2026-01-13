@@ -182,6 +182,10 @@ export class Api {
     return this.game.getCurrentPlayer();
   }
 
+  setCurrentPlayer(player: Player): void {
+    this.game.currentPlayer = player;
+  }
+
   pieceByCoordinates(x: number, y: number): Piece {
     if(x < 0 || x > NUM_COLUMNS || y < 0 || y > NUM_ROWS) {
       throw new Error("Invalid coordinates");
@@ -235,6 +239,50 @@ export class Api {
 
   moveNumber(): number {
     return this.game.getMoveNumber();
+  }
+
+  // This doesn't check legality.
+  // When making videos for Nichess, sometimes we'll have an empty board with only
+  // one piece on it. This is not a legal position and it would break the game if
+  // someone were to try to check if isGameOver for example (when there is no king), but
+  // we need this and I don't think anyone is going to run into this problem by accident.
+  // If you mess up the game with this method, it's your fault.
+  addPiece(pieceType: PieceType, squareIndex: number, healthPoints: number): boolean {
+    if(squareIndex > NUM_SQUARES || squareIndex < 0) {
+      return false;
+    }
+    let p: Piece = this.game.getPieceBySquareIndex(squareIndex);
+    let new_p: Piece = new Piece({type: pieceType, healthPoints: healthPoints, squareIndex: squareIndex});
+    this.game.board[squareIndex] = new_p;
+    // remove old piece
+    if(pieceBelongsToPlayer(p.type, Player.PLAYER_1)) {
+      let idx = this.game.playerToPieces[Player.PLAYER_1].indexOf(p);
+      if(idx != -1) {
+        this.game.playerToPieces[Player.PLAYER_1].splice(idx, 1);
+      } else {
+        throw new Error("Replaced piece was not in the piece array.");
+      }
+    } else if(pieceBelongsToPlayer(p.type, Player.PLAYER_2)) {
+      let idx = this.game.playerToPieces[Player.PLAYER_2].indexOf(p);
+      if(idx != -1) {
+        this.game.playerToPieces[Player.PLAYER_2].splice(idx, 1);
+      } else {
+        throw new Error("Replaced piece was not in the piece array.");
+      }
+    }
+    // add new piece to piece array
+    if(pieceBelongsToPlayer(new_p.type, Player.PLAYER_1)) {
+      this.game.playerToPieces[Player.PLAYER_1].push(new_p);
+      if(new_p.type == PieceType.P1_KING) {
+        this.game.playerToKing[Player.PLAYER_1] = new_p;
+      }
+    } else if(pieceBelongsToPlayer(new_p.type, Player.PLAYER_2)) {
+      this.game.playerToPieces[Player.PLAYER_2].push(new_p);
+      if(new_p.type == PieceType.P2_KING) {
+        this.game.playerToKing[Player.PLAYER_2] = new_p;
+      }
+    }
+    return true;
   }
 }
 
