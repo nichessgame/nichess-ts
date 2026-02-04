@@ -6,11 +6,20 @@ import { GameCache } from './game_cache'
 import { pieceBelongsToPlayer } from './util'
 import { ACTION_SKIP, NUM_SQUARES, NUM_COLUMNS, NUM_ROWS, Direction, PAWN_ABILITY_POINTS } from './constants'
 
+export interface HistoryEntry {
+  action: PlayerAction
+  undoInfo: UndoInfo
+}
+
 export class Api {
   private game: Game
+  private history: Array<HistoryEntry>
+  private historyIndex: number
 
   constructor() {
     this.game = new Game({})
+    this.history = new Array<HistoryEntry>()
+    this.historyIndex = 0
   }
 
   makeAction(
@@ -143,16 +152,54 @@ export class Api {
       }
     }
 
-    return this.game.makeAction(action);
+    const undoInfo = this.game.makeAction(action);
+
+    // If we're in the middle of history (after undo), truncate future history
+    if (this.historyIndex < this.history.length) {
+      this.history = this.history.slice(0, this.historyIndex);
+    }
+
+    this.history.push({ action, undoInfo });
+    this.historyIndex++;
+    return undoInfo;
   }
 
-  undoAction(undoInfo: UndoInfo): void {
-    // TODO: validate input
-    this.game.undoAction(undoInfo)
+  undoLastAction(): boolean {
+    if (this.historyIndex === 0) {
+      return false;
+    }
+    this.historyIndex--;
+    const entry = this.history[this.historyIndex];
+    this.game.undoAction(entry.undoInfo);
+    return true;
+  }
+
+  getLastAction(): PlayerAction | null {
+    if (this.historyIndex === 0) {
+      return null;
+    }
+    const entry = this.history[this.historyIndex - 1];
+    return entry.action;
+  }
+
+  redoLastAction(): boolean {
+    if (this.historyIndex >= this.history.length) {
+      return false;
+    }
+    const entry = this.history[this.historyIndex];
+    this.game.makeAction(entry.action);
+    this.historyIndex++;
+    return true;
+  }
+
+  getHistory(): Array<HistoryEntry> {
+    return this.history;
   }
 
   reset(): void {
     this.game.reset();
+    this.history = new Array<HistoryEntry>();
+    this.historyIndex = 0;
   }
 
   legalActions() {
